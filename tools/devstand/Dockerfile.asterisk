@@ -1,0 +1,7 @@
+# Опциональный live-режим стенда (реальный Asterisk): doc 09 §2 режим 2.
+# Основной поток стенда (CDR+monitor) в этом образе не нуждается —
+# инжектор пишет артефакты АТС напрямую (ADR-18).
+FROM andrius/asterisk:latest
+
+COPY asterisk/cdr_pg_csv.conf /etc/asterisk/cdr_pg_csv.conf
+CMD ["asterisk", "-f"]

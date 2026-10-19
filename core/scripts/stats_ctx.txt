@@ -1,0 +1,22 @@
+async def stats_summary(
+        session: SessionDep,
+        _: AuthDep,
+        days: Annotated[int, Query(ge=1, le=365)] = 30,
+        duration_min: Annotated[int | None, Query(ge=0)] = None,
+        duration_max: Annotated[int | None, Query(ge=0)] = None,
+    ) -> JSONResponse:
+        """Сводка для дашборда РОПа (doc 08 §4.1): объёмы, скоры, топ-возражения."""
+        from datetime import timedelta
+
+        from sqlalchemy import func
+
+        from polylog.models.calls import Call, Objection, Score
+        from polylog.models.enums import CallState
+
+        org = await get_default_org(session)
+        since = datetime.now(UTC) - timedelta(days=days)
+        conds = [Call.org_id == org.id, Call.started_at >= since]
+        if duration_min is not None:
+            conds.append(Call.duration_sec >= duration_min)
+        if duration_max is not None:
+            conds.append(Call.duratio

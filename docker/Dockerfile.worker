@@ -1,0 +1,13 @@
+FROM python:3.12-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY core /app/core
+RUN pip install --no-cache-dir "/app/core[worker,asr]"
+
+# TODO M1.5: веса моделей копируются/скачиваются модель-менеджером
+# (polylog models pull | офлайн-бандл, doc 01 §7.3)
+CMD ["python", "-m", "polylog.worker"]

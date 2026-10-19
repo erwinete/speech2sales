@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Данные (аудио/датасеты/локальные БД — doc 04 §6): записи звонков НИКОГДА не в репо
+data/
+*.db
+*.sqlite3
+
+# Env (секреты) и внутренние рабочие заметки
+.env
+HANDOFF.md
+core/eins.txt
+core/ti.txt
+
+# Обученные модели / ML-артефакты
+*.cbm
+*.ckpt
+*.pt
+*.onnx
+
+# Node (web/)
+node_modules/
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
+# GitHub Actions �ॡ�� ⮪�� � scope workflow - ������� ����� 
+.github/ 

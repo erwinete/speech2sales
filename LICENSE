@@ -1,0 +1,11 @@
+POLYLOG — СИСТЕМА РЕЧЕВОЙ АНАЛИТИКИ ДЛЯ ОТДЕЛОВ ПРОДАЖ
+
+Целевая лицензия ядра: GNU Affero General Public License v3.0 (ADR-10, docs/adr.md).
+
+ВНИМАНИЕ (ADR-17): перед публичным релизом на GitHub требуется:
+1. Юридическая проверка AGPL-позиций и plugin-границы (doc 07 §6);
+2. Добавление полного текста AGPL-3.0 в этот файл (https://www.gnu.org/licenses/agpl-3.0.txt);
+3. Фиксация лицензий сторонних моделей и корпусов в models_registry
+   (docs/06-datasets.md §5, docs/07-nli-rubert-reuse.md §6).
+
+До публичного релиза: Copyright (c) 2026. Все права защищены.

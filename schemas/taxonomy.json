@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polylog.dev/schemas/taxonomy-1.1.0-draft.json",
+  "title": "PolylogTaxonomy",
+  "description": "Общий семантический слой тренажёр ↔ аналитика (ADR-15, doc 05 §6). Единое ID-пространство: obj.* (возражения), sig.* (сигналы), resp.* (статусы отработки), crit.* (критерии/ошибки), skill.* (навыки). Governance: additive-only в minor, other как catch-all, депрекация через major. С v1.1 — источник истины enum'ов call-artifacts и trainer-scenario схем.",
+  "taxonomy_version": "1.1.0-draft",
+  "namespaces": {
+    "obj": [
+      { "id": "obj.price", "ru": "цена", "schema_enum": "price" },
+      { "id": "obj.existing_supplier", "ru": "уже есть поставщик", "schema_enum": "existing_supplier" },
+      { "id": "obj.send_offer", "ru": "пришлите КП", "schema_enum": "send_offer" },
+      { "id": "obj.timing", "ru": "сроки", "schema_enum": "timing" },
+      { "id": "obj.no_authority", "ru": "не тот, кто решает", "schema_enum": "no_authority" },
+      { "id": "obj.trust", "ru": "доверие к компании", "schema_enum": "trust" },
+      { "id": "obj.not_interested", "ru": "не интересно", "schema_enum": "not_interested" },
+      { "id": "obj.legal_contract", "ru": "юридические/договорные", "schema_enum": "legal_contract" },
+      { "id": "obj.competitor_compare", "ru": "сравнение с конкурентом", "schema_enum": "competitor_compare" },
+      { "id": "obj.other", "ru": "другое", "schema_enum": "other" }
+    ],
+    "sig": [
+      { "id": "sig.next_step_agreed", "ru": "согласован следующий шаг", "schema_enum": "next_step_agreed" },
+      { "id": "sig.budget_mentioned", "ru": "упомянут бюджет", "schema_enum": "budget_mentioned" },
+      { "id": "sig.timeline_mentioned", "ru": "упомянуты сроки закупки", "schema_enum": "timeline_mentioned" },
+      { "id": "sig.authority_confirmed", "ru": "подтверждено ЛПР", "schema_enum": "authority_confirmed" },
+      { "id": "sig.details_requested", "ru": "запрос деталей/документов", "schema_enum": "details_requested" },
+      { "id": "sig.demo_positive", "ru": "позитивная реакция на демо", "schema_enum": "demo_positive" }
+    ],
+    "resp": [
+      { "id": "resp.handled_success", "ru": "отработано успешно", "schema_enum": "handled_success" },
+      { "id": "resp.handled_partial", "ru": "отработано частично", "schema_enum": "handled_partial" },
+      { "id": "resp.ignored", "ru": "проигнорировано", "schema_enum": "ignored" },
+      { "id": "resp.deferred", "ru": "отложено («вышлю КП и вернусь»)", "schema_enum": "deferred" },
+      { "id": "resp.failed", "ru": "не отработано", "schema_enum": "failed" }
+    ],
+    "crit": [
+      { "id": "crit.greeting", "ru": "Приветствие: компания + имя" },
+      { "id": "crit.needs_identification", "ru": "Выявление потребностей (открытые вопросы)" },
+      { "id": "crit.objection_handling", "ru": "Возражения отработаны" },
+      { "id": "crit.next_step", "ru": "Зафиксирован следующий шаг" },
+      { "id": "crit.timeline_agreed", "ru": "Сроки согласованы" },
+      { "id": "crit.no_forbidden_phrases", "ru": "Нет запрещённых фраз" },
+      { "id": "crit.blind_price", "ru": "Критическая ошибка: цена без выявления потребностей" },
+      { "id": "crit.instant_discount", "ru": "Критическая ошибка: мгновенная сдача скидки" },
+      { "id": "crit.polite_brush_off", "ru": "Критическая ошибка: вежливый отказ принят за согласие" },
+      { "id": "crit.question_ignored", "ru": "Критическая ошибка: игнорирование вопроса клиента" }
+    ],
+    "skill": [
+      { "id": "skill.greeting", "ru": "Приветствие", "trainer_ref": "skill_greeting" },
+      { "id": "skill.client_identification", "ru": "Идентификация клиента", "trainer_ref": "skill_client_identification" },
+      { "id": "skill.call_agenda", "ru": "Повестка звонка", "trainer_ref": "skill_call_agenda" },
+      { "id": "skill.active_listening", "ru": "Активное слушание", "trainer_ref": "skill_active_listening" },
+      { "id": "skill.request_clarification", "ru": "Уточняющие вопросы", "trainer_ref": "skill_request_clarification" },
+      { "id": "skill.value_prop", "ru": "Презентация ценности", "trainer_ref": "skill_value_prop" },
+      { "id": "skill.benefit_linkage", "ru": "Привязка выгод к потребностям", "trainer_ref": "crit_benefit_linkage" },
+      { "id": "skill.objection_alternatives", "ru": "Альтернативы при возражении", "trainer_ref": "skill_objection_alternatives" },
+      { "id": "skill.cross_sell", "ru": "Кросс-продажа", "trainer_ref": "skill_cross_sell" },
+      { "id": "skill.next_step", "ru": "Следующий шаг", "trainer_ref": "skill_next_step" },
+      { "id": "skill.recap", "ru": "Резюмирование", "trainer_ref": "skill_recap" },
+      { "id": "skill.contact_capture", "ru": "Сбор контактов", "trainer_ref": "skill_contact_capture" },
+      { "id": "skill.farewell", "ru": "Прощание", "trainer_ref": "skill_farewell" },
+      { "id": "skill.speech_cleanliness", "ru": "Чистота речи", "trainer_ref": "skill_speech_cleanliness" },
+      { "id": "skill.confidence", "ru": "Уверенность", "trainer_ref": "skill_confidence" },
+      { "id": "skill.conversation_control", "ru": "Управление разговором", "trainer_ref": "skill_conversation_control" },
+      { "id": "skill.initiative", "ru": "Инициативность", "trainer_ref": "skill_initiative" }
+    ]
+  },
+  "mapping": {
+    "schema_enums": {
+      "call-artifacts.schema.json#objections.type": "obj",
+      "call-artifacts.schema.json#signals.kind": "sig",
+      "call-artifacts.schema.json#objections.response.status": "resp"
+    },
+    "trainer": "trainer_ref → чекпойнт multitask_v2 (doc 07); skill-пространство синхронизируется при выпуске общей головы"
+  },
+  "governance": {
+    "versioning": "semver; additive-only в minor; депрекация через major с периодом сосуществования",
+    "catch_all": "obj.other для неизвестных классов детекции",
+    "owner": "CC0-репозиторий спеки (doc 05 §6.1)"
+  }
+}

@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polylog.dev/schemas/call-artifact-1.0.0.json",
+  "title": "CallArtifact",
+  "description": "Слой A обменного формата: артефакт звонка с фактами аналитики. Поле не указано в required — опционально. Неизвестные поля потребители обязаны игнорировать (additive-only эволюция).",
+  "type": "object",
+  "required": ["schema_version", "artifact_id", "generator", "call"],
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$", "examples": ["1.0.0"] },
+    "artifact_id": { "type": "string", "description": "ULID артефакта" },
+    "generator": {
+      "type": "object",
+      "required": ["product", "version", "spec"],
+      "properties": {
+        "product": { "type": "string" },
+        "version": { "type": "string" },
+        "spec": { "type": "string", "const": "call-artifact/1.0" }
+      }
+    },
+    "call": {
+      "type": "object",
+      "required": ["call_id", "direction", "started_at", "duration_sec", "participants"],
+      "properties": {
+        "call_id": { "type": "string" },
+        "direction": { "type": "string", "enum": ["inbound", "outbound", "internal"] },
+        "started_at": { "type": "string", "format": "date-time" },
+        "duration_sec": { "type": "integer", "minimum": 0 },
+        "language": { "type": "string", "default": "ru" },
+        "participants": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["role"],
+            "properties": {
+              "role": { "type": "string", "enum": ["agent", "client", "agent_2", "client_2", "unknown"] },
+              "display_name": { "type": ["string", "null"], "description": "уже отфильтровано PII-политикой" },
+              "crmid": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "crm_refs": {
+          "type": ["object", "null"],
+          "properties": {
+            "system": { "type": "string" },
+            "deal_id": { "type": ["string", "null"] },
+            "contact_id": { "type": ["string", "null"] }
+          }
+        },
+        "previous_call_id": { "type": ["string", "null"] },
+        "chain_depth": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "transcript": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["idx", "speaker", "start_ms", "end_ms", "text"],
+        "properties": {
+          "idx": { "type": "integer", "minimum": 0 },
+          "speaker": { "type": "string" },
+          "start_ms": { "type": "integer", "minimum": 0 },
+          "end_ms": { "type": "integer", "minimum": 0 },
+          "text": { "type": "string" },
+          "conf": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "talk_ratio": {
+          "type": "object",
+          "description": "доля речи по ролям, суммарно 1.0",
+          "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "pauses": {
+          "type": "object",
+          "properties": {
+            "count": { "type": "integer" },
+            "total_sec": { "type": "number" },
+            "longest_sec": { "type": "number" }
+          }
+        },
+        "interruptions": { "type": "integer", "minimum": 0 },
+        "questions": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "wpm": { "type": "object", "additionalProperties": { "type": "number" } }
+      }
+    },
+    "objections": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/objection" }
+    },
+    "signals": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/signal" }
+    },
+    "sentiment": {
+      "type": "object",
+      "properties": {
+        "trajectory": { "type": "array", "items": { "type": "string", "enum": ["positive", "neutral", "negative"] } },
+        "final": { "type": "string", "enum": ["positive", "neutral", "negative"] }
+      }
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stage", "start_ms", "end_ms"],
+        "properties": {
+          "stage": { "type": "string", "enum": ["greeting", "identification", "qualification", "presentation", "objection_handling", "negotiation", "closing", "goodbye"] },
+          "start_ms": { "type": "integer" },
+          "end_ms": { "type": "integer" }
+        }
+      }
+    },
+    "scoring": {
+      "type": "object",
+      "required": ["rubric_id", "rubric_version", "total", "items"],
+      "properties": {
+        "rubric_id": { "type": "string" },
+        "rubric_version": { "type": "integer" },
+        "total": { "type": "number", "minimum": 0 },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["item_id", "score", "weight"],
+            "properties": {
+              "item_id": { "type": "string" },
+              "score": { "type": "number" },
+              "weight": { "type": "number" },
+              "explanation": { "type": "string" },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["span"],
+                  "properties": {
+                    "ref": { "type": "string", "description": "id находки или сегмента" },
+                    "span": { "type": "string" },
+                    "start_ms": { "type": "integer" },
+                    "method": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "required": ["abstained"],
+      "properties": {
+        "prob_loss": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "abstained": { "type": "boolean" },
+        "abstain_reason": { "type": ["string", "null"] },
+        "horizon_days": { "type": "integer" },
+        "factors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["feature", "shap"],
+            "properties": {
+              "feature": { "type": "string" },
+              "shap": { "type": "number" },
+              "value": { "type": ["number", "string", "null"] }
+            }
+          }
+        },
+        "model_id": { "type": ["string", "null"] }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["generated_at"],
+      "properties": {
+        "asr_backend": { "type": ["string", "null"] },
+        "lexicon_hash": { "type": ["string", "null"] },
+        "pii_policy": { "type": "string", "enum": ["none", "mask", "pseudonymize", "redact"] },
+        "generated_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "$defs": {
+    "objection": {
+      "type": "object",
+      "required": ["id", "type", "quote", "start_ms", "end_ms", "speaker", "response", "confidence"],
+      "properties": {
+        "id": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": ["price", "existing_supplier", "send_offer", "timing", "no_authority", "trust", "not_interested", "legal_contract", "competitor_compare", "other"]
+        },
+        "subtype": { "type": ["string", "null"] },
+        "quote": { "type": "string", "minLength": 1 },
+        "start_ms": { "type": "integer" },
+        "end_ms": { "type": "integer" },
+        "speaker": { "type": "string" },
+        "response": {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": { "type": "string", "enum": ["handled_success", "handled_partial", "ignored", "deferred", "failed"] },
+            "quote": { "type": ["string", "null"] },
+            "start_ms": { "type": ["integer", "null"] },
+            "end_ms": { "type": ["integer", "null"] },
+            "latency_ms": { "type": ["integer", "null"] }
+          }
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "model_id": { "type": "string" }
+      }
+    },
+    "signal": {
+      "type": "object",
+      "required": ["kind", "quote", "start_ms", "confidence"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["next_step_agreed", "budget_mentioned", "timeline_mentioned", "authority_confirmed", "details_requested", "demo_positive"]
+        },
+        "quote": { "type": "string", "minLength": 1 },
+        "start_ms": { "type": "integer" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}

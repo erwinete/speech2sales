@@ -1,0 +1,16 @@
+FROM python:3.12-slim
+
+# ffmpeg — конвертация экзотических форматов (fast path 16к PCM работает без него)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY core /app/core
+RUN pip install --no-cache-dir /app/core
+
+EXPOSE 8000
+HEALTHCHECK --interval=10s --timeout=3s --retries=12 \
+    CMD curl -fsS http://localhost:8000/healthz || exit 1
+
+CMD ["uvicorn", "polylog.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

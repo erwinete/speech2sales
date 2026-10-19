@@ -1,0 +1,116 @@
+# Полилог — docker-compose (doc 01 §7.1)
+# Профили:
+#   base        — api + postgres(pgvector) + redis + minio
+#   devstand    — asterisk + инжектор звонков из датасета (doc 09)
+#   gpu / cpu   — ASR-воркеры (подключаются вместе с procrastinate-контуром, M1.5)
+#   trainer     — fine-tuning (M5+)
+# Запуск dev-окружения целиком:
+#   docker compose --profile base --profile devstand up -d
+name: polylog
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    profiles: [base, devstand]
+    environment:
+      POSTGRES_USER: polylog
+      POSTGRES_PASSWORD: ${POLYLOG_PG_PASSWORD:-polylog}
+      POSTGRES_DB: polylog
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U polylog -d polylog"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    profiles: [base]
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio:latest
+    profiles: [base]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: polylog
+      MINIO_ROOT_PASSWORD: ${POLYLOG_MINIO_PASSWORD:-polylog-minio}
+    volumes:
+      - miniodata:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    profiles: [base, devstand]
+    environment:
+      POLYLOG_DATABASE_URL: postgresql+asyncpg://polylog:${POLYLOG_PG_PASSWORD:-polylog}@postgres:5432/polylog
+      POLYLOG_API_TOKEN: ${POLYLOG_API_TOKEN:-dev-insecure-token}
+      POLYLOG_INLINE_PROCESS: "true"   # воркеры procrastinate — M1.5; до них инлайн
+      POLYLOG_AUTOCREATE_TABLES: "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  asterisk:
+    build:
+      context: ./tools/devstand
+      dockerfile: Dockerfile.asterisk
+    profiles: [devstand]
+    # live-режим: сигналинг+реальные звонки; для CDR-потока не обязателен (ADR-18)
+    command: ["asterisk", "-f"]
+    volumes:
+      - ./data/monitor:/var/spool/asterisk/monitor
+
+  injector:
+    build:
+      context: ./tools/devstand
+    profiles: [devstand]
+    command: ["--batch", "20", "--dsn", "postgresql://polylog:${POLYLOG_PG_PASSWORD:-polylog}@postgres:5432/polylog", "--monitor-dir", "/monitor", "--dataset-dir", "/datasets/infoabayai/single-channel"]
+    volumes:
+      - ./data/monitor:/monitor
+      - ./data/datasets:/datasets:ro   # сюда кладётся скачанный датасет (doc 06 §4)
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ASR/NLP-воркер procrastinate (очередь pipeline). GPU-вариант — раскомментировать
+  # deploy.resources с nvidia; на CPU-сервере собирается как есть (gigaam CPU RTF 0.05).
+  # POLYLOG_PERIODIC=1 включает periodic-джобы: инсайты рисков/повторов 06:00,
+  # ночной S6-регресс 03:00 (гейт POLYLOG_NIGHTLY_S6=1).
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    profiles: [worker]
+    environment:
+      POLYLOG_DATABASE_URL: postgresql+asyncpg://polylog:${POLYLOG_PG_PASSWORD:-polylog}@postgres:5432/polylog
+      POLYLOG_STORAGE_DIR: /data/storage
+      POLYLOG_ASR_BACKEND: ${POLYLOG_ASR_BACKEND:-gigaam-v3-e2e-rnnt}
+      POLYLOG_DIARIZATION: ${POLYLOG_DIARIZATION:-pyannote}
+      POLYLOG_PERIODIC: "1"
+      POLYLOG_NIGHTLY_S6: ${POLYLOG_NIGHTLY_S6:-0}
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - workdata:/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{ driver: nvidia, count: 1, capabilities: [gpu] }]
+
+volumes:
+  pgdata:
+  miniodata:
+  workdata:
