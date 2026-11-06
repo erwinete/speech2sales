@@ -31,6 +31,41 @@ async def get_or_create_connector(
     return conn
 
 
+def _agent_ext_of(ref: CallRef) -> str | None:
+    """Внутренний номер менеджера: из ref.agent_ext, иначе короткий числовой
+    (<=6 цифр) конец звонка по направлению (outbound — phone_from,
+    inbound — phone_to)."""
+    if ref.agent_ext:
+        return ref.agent_ext
+    candidate = ref.phone_from if ref.direction == "outbound" else ref.phone_to
+    if candidate and candidate.isdigit() and len(candidate) <= 6:
+        return candidate
+    return None
+
+
+async def resolve_agent_user(
+    session: AsyncSession, org_id: uuid.UUID, agent_ext: str | None
+):
+    """Менеджер организации по внутреннему номеру (User.agent_ext_ids)."""
+    if not agent_ext:
+        return None
+    from polylog.models.system import User
+
+    users = (
+        (
+            await session.execute(
+                select(User).where(User.org_id == org_id, User.is_active.is_(True))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for u in users:
+        if agent_ext in (u.agent_ext_ids or []):
+            return u
+    return None
+
+
 async def create_call_from_ref(
     session: AsyncSession,
     org: Org,
@@ -98,6 +133,11 @@ async def create_call_from_ref(
         call.contact_id = contact.id
         call.company_id = contact.company_id
         await rebuild_chain(session, org.id, contact.id)
+
+    # менеджер: Call.agent_user_id по внутреннему номеру (doc 02 §1.2, RBAC)
+    agent_user = await resolve_agent_user(session, org.id, _agent_ext_of(ref))
+    if agent_user is not None:
+        call.agent_user_id = agent_user.id
 
     log.info("создан звонок %s (%s, %s)", call.id, ref.external_id, call.state)
     return call

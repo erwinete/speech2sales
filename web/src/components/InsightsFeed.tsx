@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { api } from "../api";
 import { StateBadge } from "../App";
 import { OBJECTION_RU, RESPONSE_RU, ru } from "../ru";
 
@@ -73,7 +74,7 @@ export default function InsightsFeed({
   }, [load]);
 
   const act = async (id: string, action: "ack" | "dismiss") => {
-    await fetch(`/api/v1/insights/${id}/${action}`, { method: "POST" });
+    await api.insightAction(id, action);  // F-1: авторизованный вызов через api.ts
     setItems((prev) => (prev ? prev.filter((i) => i.id !== id) : prev));
   };
 

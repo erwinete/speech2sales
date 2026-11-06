@@ -37,8 +37,25 @@ def feature_vector(f) -> list[float]:
     ]
 
 
-def outcomes_available(session, org_id) -> int:
-    """Число закрытых исходов сделок org (won|lost)."""
+_cached_model: tuple[float, Any] | None = None  # (mtime, CatBoostClassifier)
+
+
+def _load_cached_model():
+    """Загрузка модели с диска с кэшем по mtime (B-5: без I/O на каждый вызов)."""
+    global _cached_model
+    path = Path(MODEL_PATH)
+    mtime = path.stat().st_mtime
+    if _cached_model is None or _cached_model[0] != mtime:
+        from catboost import CatBoostClassifier
+
+        model = CatBoostClassifier()
+        model.load_model(MODEL_PATH)
+        _cached_model = (mtime, model)
+    return _cached_model[1]
+
+
+def outcomes_available_sync(session, org_id) -> int:
+    """Число закрытых исходов сделок org (won|lost) — sync-вариант для скриптов."""
     from sqlalchemy import func, select
 
     from polylog.models.graph import Deal
@@ -50,6 +67,20 @@ def outcomes_available(session, org_id) -> int:
             .where(Deal.org_id == org_id, Deal.status.in_(("won", "lost")))
         )
     ).scalar_one()
+
+
+async def outcomes_available(session, org_id) -> int:
+    """Число закрытых исходов сделок org (won|lost) — async (B-5)."""
+    from sqlalchemy import func, select
+
+    from polylog.models.graph import Deal
+
+    result = await session.execute(
+        select(func.count())
+        .select_from(Deal)
+        .where(Deal.org_id == org_id, Deal.status.in_(("won", "lost")))
+    )
+    return result.scalar_one()
 
 
 def model_ready() -> bool:
@@ -87,10 +118,7 @@ def predict(f) -> dict[str, Any] | None:
     if not model_ready():
         return None
     try:
-        from catboost import CatBoostClassifier
-
-        model = CatBoostClassifier()
-        model.load_model(MODEL_PATH)
+        model = _load_cached_model()
         vec = [feature_vector(f)]
         proba = float(model.predict_proba(vec)[0][1])
         # вклады: сдвиг вероятности при обнулении каждой фичи (дёшево и

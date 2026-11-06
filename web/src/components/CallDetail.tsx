@@ -43,6 +43,11 @@ export default function CallDetail({
 
   const durationMs = (detail.duration_sec ?? 0) * 1000;
   const markers: ArtifactMarker[] = [
+    ...(detail.signals ?? []).map((s) => ({
+      startMs: s.start_ms ?? 0,
+      kind: "signal" as const,
+      label: `Сигнал: ${s.kind}`,
+    })),
     ...detail.objections.map((o) => ({
       startMs: o.start_ms ?? 0,
       kind: "objection" as const,

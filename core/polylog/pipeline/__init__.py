@@ -172,10 +172,19 @@ async def stage_transcribe(session: AsyncSession, call: Call, storage: Storage, 
 
 
 async def stage_postprocess(session: AsyncSession, call: Call, storage: Storage, settings: Settings) -> None:
-    """transcribed → lexicon_corrected: пост-ASR обработка — PII-детекция + регистр
-    находок (doc 04 §3). Lexicon-коррекция L1 (rapidfuzz) — M2; стадия уже в контракте."""
+    """transcribed → lexicon_corrected: L1-словарная коррекция по
+    `lexicon_entries` организации (raw_text + corrected) → PII-детекция +
+    маскирование в тексте при политике `redact` (doc 04 §3)."""
+    from polylog.nlp.lexicon_corrector import apply_lexicon_correction
+    from polylog.pii.detect import mask_text
+
+    segments = await _load_segments(session, call.id)
+    await apply_lexicon_correction(session, call.org_id, segments)
+
+    # физическое маскирование ПДн в тексте при политике redact (152-ФЗ)
+    redact = settings.pii_action == "redact"
     await session.execute(delete(PIIFinding).where(PIIFinding.call_id == call.id))
-    for seg in await _load_segments(session, call.id):
+    for seg in segments:
         for span in detect_pii(seg.text):
             session.add(
                 PIIFinding(
@@ -188,6 +197,8 @@ async def stage_postprocess(session: AsyncSession, call: Call, storage: Storage,
                     detector=span.detector,
                 )
             )
+            if redact:
+                seg.text = mask_text(seg.text)
     await _set_state(call, CallState.lexicon_corrected)
 
 
@@ -309,25 +320,25 @@ async def _nli_check(
 
 
 async def stage_score(session: AsyncSession, call: Call, storage: Storage, settings: Settings) -> None:
-    """analyzed → scored: rubric-engine с evidence (doc 02 §4). Рубрика создаётся
-    при первом звонке организации (default_b2b_v1); замена — через rubrics в UI (M2)."""
+    """analyzed → scored: rubric-engine с evidence (doc 02 §4). Активная рубрика
+    организации из БД (последняя версия по is_active); при отсутствии — создаётся
+    дефолтная default_b2b_v1. Пользовательские правки рубрики не затираются."""
     rubric = (
         await session.execute(
-            select(Rubric).where(Rubric.org_id == call.org_id, Rubric.name == DEFAULT_RUBRIC_SPEC["rubric_id"])
+            select(Rubric)
+            .where(Rubric.org_id == call.org_id, Rubric.is_active.is_(True))
+            .order_by(Rubric.version.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
     if rubric is None:
         rubric = Rubric(
             org_id=call.org_id, name=DEFAULT_RUBRIC_SPEC["rubric_id"],
             version=DEFAULT_RUBRIC_SPEC["version"], spec=DEFAULT_RUBRIC_SPEC,
+            is_active=True,
         )
         session.add(rubric)
         await session.flush()
-    elif rubric.spec != DEFAULT_RUBRIC_SPEC:
-        # спека рубрики обновилась в коде — перетираем с бампом версии (dev-режим;
-        # прод: versioned rubrics + рескоринг фоном, doc 02 §4)
-        rubric.spec = DEFAULT_RUBRIC_SPEC
-        rubric.version = DEFAULT_RUBRIC_SPEC["version"]
 
     segments = await _load_segments(session, call.id)
     seg_dicts = _segment_dicts(segments)

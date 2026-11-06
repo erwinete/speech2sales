@@ -77,6 +77,13 @@ def get_connector(kind: str, config: dict[str, Any]):
                 name_regex=config.get("name_regex", cfg.name_regex),
             )
         return SftpMonitorConnector(cfg)
+    if kind == "sql-cdr":
+        from polylog.ingest.live import SqlCdrSource
+
+        return SqlCdrSource(
+            dsn=config.get("dsn", ""),
+            columns=config.get("columns"),
+        )
     raise ConnectorError(
         f"коннектор {kind!r} не зарегистрирован; доступно: freepbx, devstand, cisco_ucm, "
         f"oktell, mightycall, bitrix24 (webhook), amocrm"

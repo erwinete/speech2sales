@@ -55,6 +55,9 @@ services:
       POLYLOG_API_TOKEN: ${POLYLOG_API_TOKEN:-dev-insecure-token}
       POLYLOG_INLINE_PROCESS: "true"   # воркеры procrastinate — M1.5; до них инлайн
       POLYLOG_AUTOCREATE_TABLES: "true"
+      POLYLOG_STORAGE_DIR: /data/storage   # общий том с worker (B-9)
+    volumes:
+      - workdata:/data/storage
     ports:
       - "8000:8000"
     depends_on:

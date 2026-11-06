@@ -1,10 +1,10 @@
-"""Системные таблицы: orgs, коннекторы, рубрики, словарь, модели, инсайты, аудит — doc 03 §2, §6."""
+"""Системные таблицы: orgs, пользователи/RBAC, коннекторы, рубрики, словарь, модели, инсайты, аудит — doc 03 §2, §6."""
 
 import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Integer, String, Text, Uuid
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from polylog.models.base import Base, CreatedMixin, PkMixin, utcnow
@@ -26,18 +26,27 @@ class User(Base, PkMixin, CreatedMixin):
     role: Mapped[str] = mapped_column(String(16), default="agent")  # admin|supervisor|analyst|agent|dpo
     display_name: Mapped[str | None] = mapped_column(String(255))
     agent_ext_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255))  # PBKDF2-SHA256
+    team_name: Mapped[str | None] = mapped_column(String(128))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Connector(Base, PkMixin, CreatedMixin):
     __tablename__ = "connectors"
 
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    kind: Mapped[str] = mapped_column(String(32), nullable=False)  # freepbx|bitrix24|amocrm|s3watch|http|devstand
+    # kind: freepbx|bitrix24|amocrm|mightycall|oktell|cisco_ucm|sftp-monitor|sql-cdr|devstand
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(255))
     config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     # секреты коннектора — отдельное шифрованное поле в проде (doc 04 §6)
-    status: Mapped[str] = mapped_column(String(16), default="active")
+    secrets_encrypted: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="active")  # active|paused|error
+    poll_interval_min: Mapped[int] = mapped_column(Integer, default=5)
     last_poll_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    calls_ingested_total: Mapped[int] = mapped_column(Integer, default=0)
     cursor: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
 
@@ -46,7 +55,9 @@ class Rubric(Base, PkMixin, CreatedMixin):
 
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     spec: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)  # doc 02 §4.1
     created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid)
 

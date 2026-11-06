@@ -230,3 +230,54 @@ async def run_nightly_s6() -> dict[str, object]:
 async def nightly_regression_s6(timestamp: int | None = None) -> None:
     """Ежедневно 03:00: регресс WER на golden (вкл. POLYLOG_NIGHTLY_S6=1)."""
     await run_nightly_s6()
+
+
+async def poll_active_connectors(timestamp: int | None = None) -> dict[str, int]:
+    """Опрос активных коннекторов (ТЗ §4.3-B): discover→download→create→process.
+    Вынесено отдельной функцией — тестируемо без procrastinate."""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from polylog.api.routers.connectors import sync_connector
+    from polylog.config import get_settings
+    from polylog.db import make_engine, make_sessionmaker
+    from polylog.models.system import Connector
+    from polylog.storage import make_storage
+
+    settings = get_settings()
+    engine = make_engine(settings.database_url)
+    sm = make_sessionmaker(engine)
+    storage = make_storage(settings)
+    polled = errors = 0
+    async with sm() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(Connector).where(Connector.status == "active")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            interval = timedelta(minutes=row.poll_interval_min or 5)
+            last = row.last_poll_at
+            if last is not None and last.tzinfo is None:
+                last = last.replace(tzinfo=UTC)
+            if last is not None and datetime.now(UTC) - last < interval:
+                continue
+            result = await sync_connector(session, None, row, settings, storage)
+            polled += 1
+            if result["errors"]:
+                errors += len(result["errors"])
+    await engine.dispose()
+    return {"polled": polled, "errors": errors}
+
+
+@app.periodic(cron="*/5 * * * *", periodic_id="poll-connectors")
+@app.task(name="poll_active_connectors_task", queue="pipeline")
+async def poll_active_connectors_task(timestamp: int | None = None) -> None:
+    """Каждые 5 минут: pull-коннекторы со статусом active."""
+    result = await poll_active_connectors()
+    log.info("periodic: коннекторы опрошены: %s", result)
