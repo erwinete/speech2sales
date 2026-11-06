@@ -142,6 +142,29 @@ class ExportJob(Base, PkMixin, CreatedMixin):
     file_key: Mapped[str | None] = mapped_column(String(512))
 
 
+class LLMAnalysisRun(Base, PkMixin, CreatedMixin):
+    """История запусков глубокого анализа в облачной/локальной LLM (ТЗ v3.0 §3.2,
+    AI Lab). mode — срез данных, pii_config — состояние слайдера ПДн и статистика
+    замен, alias_map живёт в pii_config.alias_map для кликабельных ссылок UI."""
+
+    __tablename__ = "llm_analysis_runs"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    author_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False)  # rubert_scores|problematic_calls|transcripts_range
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)  # openrouter|openai_custom|mcp_export
+    model_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    filter_spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    pii_config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    prompt_text: Mapped[str] = mapped_column(Text, nullable=False)
+    calls_count: Mapped[int] = mapped_column(Integer, default=0)
+    call_ids: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    result_markdown: Mapped[str | None] = mapped_column(Text)
+    token_usage: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="done")  # running|done|failed
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+
 class DatasetManifest(Base, PkMixin, CreatedMixin):
     """Манифест сплита датасета/эталона (doc 06 §4): hash, состав, лицензия, атрибуция."""
 

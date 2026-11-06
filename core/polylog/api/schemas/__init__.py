@@ -12,4 +12,5 @@ from polylog.api.schemas.calls import (  # noqa: F401
     UploadResult,
 )
 from polylog.api.schemas.connectors import ConnectorCreate, ConnectorOut, ConnectorUpdate  # noqa: F401
+from polylog.api.schemas.llm import AIAnalyzeRequest, AIContextRequest, PiiStatsOut  # noqa: F401
 from polylog.api.schemas.settings import LexiconEntryCreate, RubricUpdate  # noqa: F401

@@ -25,6 +25,20 @@ def test_inn_detected():
     assert any(s.kind == "inn" for s in spans)
 
 
+def test_passport_detected():
+    """BUG-01 (ТЗ v3.0 §2.1): серия 2+2 и номер 6 = 10 цифр; раньше условие
+    len != 8 делало детектор мёртвым."""
+    assert any(s.kind == "passport" for s in detect_pii("Паспорт 45 10 123456"))
+    assert any(s.kind == "passport" for s in detect_pii("паспорт: 4510 123456"))
+    # 8 цифр — не паспорт
+    assert not any(s.kind == "passport" for s in detect_pii("номер 45 10 1234"))
+
+
+def test_snils_detected():
+    spans = detect_pii("СНИЛС 112-233-445 95 страховой номер")
+    assert any(s.kind == "snils" for s in spans)
+
+
 def test_mask_text_replaces_all_pii():
     masked = mask_text("Звоните на +7 900 123-45-67 или ivan@example.ru")
     assert "+7" not in masked and "@" not in masked

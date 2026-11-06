@@ -36,3 +36,6 @@ dist/
 Thumbs.db
 # GitHub Actions требует токен с scope workflow - добавим позже 
 .github/ 
+
+# CatBoost training artifacts (BUG-12)
+core/catboost_info/

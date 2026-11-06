@@ -1,5 +1,6 @@
 """Роутеры Полилога (ТЗ §3.1): доменные APIRouter'ы, подключаемые в create_app."""
 
+from polylog.api.routers.ai_analysis import router as ai_analysis_router
 from polylog.api.routers.analytics import router as analytics_router
 from polylog.api.routers.auth import router as auth_router
 from polylog.api.routers.calls import router as calls_router
@@ -18,6 +19,7 @@ ALL_ROUTERS = (
     insights_router,
     connectors_router,
     settings_router,
+    ai_analysis_router,
 )
 
 __all__ = ["ALL_ROUTERS"]

@@ -69,15 +69,29 @@ class ViolationOut(BaseModel):
     model_id: str
 
 
+class PiiFindingOut(BaseModel):
+    kind: str
+    action: str
+    segment_idx: int | None
+    start_ms: int | None
+    end_ms: int | None
+    detector: str
+
+
 class CallDetail(CallOut):
     stage_error: dict[str, Any] | None
     channels_map: dict[str, str] | None
     recording_key: str | None
     normalized_key: str | None
+    agent_name: str | None = None
+    contact_name: str | None = None
     segments: list[SegmentOut] = Field(default_factory=list)
     metrics: dict[str, Any] | None = None
     objections: list[ObjectionOut] = Field(default_factory=list)
     scores: list[ScoreOut] = Field(default_factory=list)
+    signals: list[SignalOut] = Field(default_factory=list)
+    violations: list[ViolationOut] = Field(default_factory=list)
+    pii_findings: list[PiiFindingOut] = Field(default_factory=list)
 
 
 class CallList(BaseModel):

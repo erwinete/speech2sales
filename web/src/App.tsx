@@ -10,6 +10,7 @@ import ManagersAnalyticsPage from "./pages/ManagersAnalyticsPage";
 import ConnectorsPage from "./pages/ConnectorsPage";
 import UsersPage from "./pages/UsersPage";
 import SettingsPage from "./pages/SettingsPage";
+import AiLabPage from "./pages/AiLabPage";
 
 type Route = { path: string; query: URLSearchParams };
 
@@ -43,6 +44,9 @@ function Sidebar({ route, callsCount }: { route: Route; callsCount: number | nul
       {item("dashboard", "dashboard", "Дашборд и звонки", callsCount)}
       {item("contacts", "contacts", "Клиенты 360°")}
       {item("managers", "coach", "Команда и коучинг")}
+      {user?.role === "admin" || user?.role === "supervisor" || user?.role === "analyst" || user?.is_service ? (
+        item("ai-lab", "sparkles", "ИИ-Анализатор")
+      ) : null}
       {user?.role === "admin" || user?.role === "supervisor" || user?.role === "analyst" || user?.is_service ? (
         <>
           <div className="group-label">Интеграции и управление</div>
@@ -155,6 +159,7 @@ function App() {
             {page === "dashboard" && "Дашборд и звонки"}
             {page === "contacts" && "Клиенты 360°"}
             {page === "managers" && "Команда и коучинг"}
+            {page === "ai-lab" && "ИИ-Анализатор (LLM & MCP)"}
             {page === "connectors" && "Коннекторы АТС и CRM"}
             {page === "users" && "Пользователи и роли"}
             {page === "settings" && "Настройки"}
@@ -179,6 +184,7 @@ function App() {
           <Customer360Page onOpenCall={(id) => go(`calls/${id}`)} />
         )}
         {page === "managers" && <ManagersAnalyticsPage />}
+        {page === "ai-lab" && <AiLabPage onOpenCall={(id) => go(`calls/${id}`)} />}
         {page === "connectors" && <ConnectorsPage />}
         {page === "users" && <UsersPage />}
         {page === "settings" && <SettingsPage />}

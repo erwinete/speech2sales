@@ -353,6 +353,30 @@ export const api = {
     if (filters.dateTo) q.set("date_to", filters.dateTo);
     return request<StatsSummaryV2>(`/api/v1/stats/summary?${q}`);
   },
+
+  // ── AI Lab (ТЗ v3.0 §4.4) ──
+  aiPresets: () =>
+    request<AiPresets>("/api/v1/ai/presets"),
+  previewContext: (body: AiContextRequest) =>
+    request<PreviewContextResponse>("/api/v1/ai/preview-context", {
+      method: "POST", body: JSON.stringify(body),
+    }),
+  aiAnalyze: (body: AiAnalyzeRequest) =>
+    request<AiAnalyzeResponse>("/api/v1/ai/analyze", {
+      method: "POST", body: JSON.stringify(body),
+    }),
+  aiModels: (baseUrl: string, apiKey?: string) => {
+    const q = new URLSearchParams({ base_url: baseUrl });
+    if (apiKey) q.set("api_key", apiKey);
+    return request<{ items: { id: string; name: string | null; context_length: number | null }[] }>(
+      `/api/v1/ai/models?${q}`);
+  },
+  aiRuns: () =>
+    request<{ items: AiRunRow[] }>("/api/v1/ai/runs"),
+  aiRun: (id: string) =>
+    request<AiRunDetail>(`/api/v1/ai/runs/${id}`),
+  mcpConfig: (sanitizePii = true) =>
+    request<McpConfig>(`/api/v1/ai/mcp-config?sanitize_pii=${sanitizePii}`),
 };
 
 // ── v2 management API (ТЗ §7.3) ──
@@ -507,4 +531,122 @@ export interface StatsSummaryV2 {
   violations_total: number;
   top_objections: { type: string; count: number; handled_count: number }[];
   sentiment_avg: number | null;
+}
+
+// ── AI Lab: типы (ТЗ v3.0 §4.4) ──
+
+export interface PiiSanitizerConfig {
+  enabled: boolean;
+  strip_names: boolean;
+  strip_phones_emails: boolean;
+  strip_orders_contracts: boolean;
+  strip_internal_ids: boolean;
+  strip_company_names: boolean;
+  custom_stop_words: string[];
+}
+
+export interface PiiStats {
+  total_redactions: number;
+  by_category: Record<string, number>;
+  alias_map: Record<string, string>;
+}
+
+export interface AiContextRequest {
+  mode: "rubert_scores" | "problematic_calls" | "transcripts_range";
+  date_from?: string | null;
+  date_to?: string | null;
+  days?: number;
+  agent_user_id?: string | null;
+  risk_band?: string | null;
+  score_max?: number | null;
+  direction?: string | null;
+  min_duration_sec?: number | null;
+  objection_type?: string | null;
+  call_ids?: string[];
+  limit_calls?: number;
+  pii: PiiSanitizerConfig;
+}
+
+export interface AiAnalyzeRequest extends AiContextRequest {
+  provider: string;
+  base_url: string;
+  api_key?: string | null;
+  model: string;
+  system_prompt: string;
+  user_prompt: string;
+  temperature?: number;
+  max_tokens?: number;
+}
+
+export interface AiPreset {
+  id: string;
+  title: string;
+  mode: string;
+  system_prompt: string;
+  user_prompt: string;
+}
+
+export interface AiPresets {
+  presets: AiPreset[];
+  recommended_models: { id: string; label: string }[];
+  system_prompt_default: string;
+  provider_settings: {
+    base_url: string;
+    api_key_masked: string | null;
+    model: string | null;
+  };
+}
+
+export interface PreviewContextResponse {
+  mode: string;
+  calls_matched: number;
+  estimated_tokens: number;
+  pii_stats: PiiStats;
+  context_preview: string;
+  structured_bundle: Record<string, unknown>;
+}
+
+export interface AiAnalyzeResponse {
+  run_id: string;
+  result_markdown: string;
+  pii_stats: PiiStats;
+  alias_map: Record<string, string>;
+  token_usage: Record<string, number>;
+  calls_count: number;
+}
+
+export interface AiRunRow {
+  id: string;
+  mode: string;
+  provider: string;
+  model_id: string;
+  calls_count: number;
+  status: string;
+  error_message: string | null;
+  prompt_text: string;
+  created_at: string;
+}
+
+export interface AiRunDetail extends AiRunRow {
+  filter_spec: Record<string, unknown>;
+  pii_config: Record<string, unknown>;
+  prompt_text: string;
+  call_ids: string[];
+  result_markdown: string | null;
+  token_usage: Record<string, number> | null;
+}
+
+export interface McpConfig {
+  tools: { name: string; description: string }[];
+  starter_prompt: string;
+  harnesses: Record<
+    string,
+    {
+      title: string;
+      cli_command?: string;
+      mcp_json?: Record<string, unknown>;
+      config_toml?: string;
+      config_json?: Record<string, unknown>;
+    }
+  >;
 }

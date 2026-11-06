@@ -12,13 +12,18 @@ _EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 _CARD = re.compile(r"\b(?:\d[ -]?){13,19}\b")
 _PASSPORT = re.compile(r"\b\d{2}\s?\d{2}\s?\d{6}\b")
 _INN = re.compile(r"\b(?:\d{10}|\d{12})\b")
+_SNILS = re.compile(r"\b\d{3}-\d{3}-\d{3}[\s\-]\d{2}\b")
 
+# Порядок важен: ИНН (слитные 10/12 цифр) до паспорта, иначе слитный паспорт
+# «4510123456» перехватывает 10-значный ИНН. Паспорт с разделителями
+# («45 10 123456», «4510 123456») ИНН не матчится и доходит до своего детектора.
 DETECTORS: tuple[tuple[str, re.Pattern], ...] = (
     ("phone", _PHONE),
     ("email", _EMAIL),
     ("card", _CARD),
-    ("passport", _PASSPORT),
     ("inn", _INN),
+    ("passport", _PASSPORT),
+    ("snils", _SNILS),
 )
 
 
@@ -59,8 +64,9 @@ def detect_pii(text: str) -> list[PIISpan]:
                 if not (13 <= len(digits) <= 19) or not _luhn_ok(digits):
                     continue
             if kind == "passport":
-                # исключаем совпадения с длинными номерами (карты/ИНН обрабатываются раньше)
-                if len(re.sub(r"\D", "", value)) != 8:
+                # BUG-01 (ТЗ v3.0 §2.1): серия (2+2) + номер (6) = 10 цифр.
+                # Раньше проверялось != 8 и детектор никогда не срабатывал.
+                if len(re.sub(r"\D", "", value)) != 10:
                     continue
             if overlaps(m.start(), m.end()):
                 continue

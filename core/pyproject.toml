@@ -37,6 +37,7 @@ pg = ["asyncpg>=0.29"]
 
 [project.scripts]
 polylog-api = "polylog.api.main:run"
+polylog-mcp = "polylog.mcp.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["polylog"]

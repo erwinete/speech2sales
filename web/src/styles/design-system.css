@@ -196,3 +196,25 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .heatmap .good { background: var(--status-success-bg); color: var(--status-success); }
 .heatmap .mid { background: var(--status-warning-bg); color: var(--status-warning); }
 .heatmap .bad { background: var(--status-danger-bg); color: var(--status-danger); }
+
+/* ── AI Lab (ТЗ v3.0 §5) ── */
+.ai-mode-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 12px 0; }
+@media (max-width: 1100px) { .ai-mode-grid { grid-template-columns: 1fr; } }
+.ai-mode { text-align: left; cursor: pointer; border: 1px solid var(--border-subtle); margin: 0; }
+.ai-mode.active { border-color: var(--brand-primary); background: var(--brand-primary-subtle); box-shadow: 0 0 0 1px var(--brand-primary); }
+.ai-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 4fr); gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .ai-grid { grid-template-columns: 1fr; } }
+
+.pii-card { border-left: 4px solid var(--border-strong); }
+.pii-card.on { border-left-color: var(--status-success); }
+.pii-chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; margin-top: 12px; }
+.pii-chip {
+  display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; cursor: pointer;
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-subtle);
+}
+.pii-chip input { margin-top: 3px; }
+.pii-chip small { color: var(--text-muted); }
+
+.md-view p { margin: 6px 0; }
+.md-view ul { margin: 6px 0; padding-left: 20px; }
+.md-view h2:first-child, .md-view h3:first-child { margin-top: 0; }

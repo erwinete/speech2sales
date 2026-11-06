@@ -493,11 +493,17 @@ async def _enroll_agent_voice_if_needed(session: AsyncSession, call: Call, stora
 
 
 async def process_call(
-    session: AsyncSession, call_id: uuid.UUID, settings: Settings, storage: Storage
+    session: AsyncSession, call_id: uuid.UUID, settings: Settings, storage: Storage,
+    force: bool = False,
 ) -> Call:
-    """Полный прогон стадий (dev: inline). Повторный вызов на done — no-op."""
+    """Полный прогон стадий (dev: inline). Повторный вызов на done — no-op,
+    кроме force=True (репроцессинг из UI, BUG-03): принудительный сброс
+    done/failed в discovered с очисткой stage_error."""
     call = await _load_call(session, call_id)
-    if CallState(call.state) is CallState.failed:
+    if CallState(call.state) in (CallState.failed, CallState.done) and force:
+        call.state = CallState.discovered.value
+        call.stage_error = None
+    elif CallState(call.state) is CallState.failed:
         call.state = CallState.discovered.value  # перезапуск из UI
         call.stage_error = None
 

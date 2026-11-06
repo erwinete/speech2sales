@@ -16,6 +16,11 @@ const ICONS: Record<string, React.ReactNode> = {
   logout: <path d="M9 4H5v16h4M14 8l4 4-4 4M8 12h10"/>,
   refresh: <path d="M20 11a8 8 0 1 0-2.3 5.3M20 5v6h-6"/>,
   alert: <><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4m0 3v.5"/></>,
+  sparkles: <><path d="M12 3.5 13.6 8l4.4 1.6L13.6 11.2 12 15.7l-1.6-4.5L6 9.6 10.4 8 12 3.5z"/><path d="M18.5 14.5 19.3 17l2.2.8-2.2.8-.8 2.4-.8-2.4-2.2-.8 2.2-.8.8-2.5z"/><path d="M5 14l.7 2.1L7.8 17l-2.1.8L5 20l-.7-2.2L2.2 17l2.1-.9L5 14z"/></>,
+  copy: <><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></>,
+  download: <path d="M12 4v12m0 0 4-4m-4 4-4-4M4 20h16"/>,
+  shield: <><path d="M12 3 5 6v6c0 4.4 3 8.4 7 9.5 4-1.1 7-5.1 7-9.5V6l-7-3z"/><path d="m9 12 2 2 4-4"/></>,
+  bot: <><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4m-4 8h.01M16 12h.01M9 16h6"/></>,
 };
 
 export function Icon({ name, size = 16 }: { name: keyof typeof ICONS | string; size?: number }) {

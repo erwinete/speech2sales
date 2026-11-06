@@ -206,6 +206,30 @@ async def call_detail(call_id: uuid.UUID, session: SessionDep, user: AuthDep) ->
         .scalars()
         .all()
     )
+    # BUG-10: signals/violations/pii_findings/agent_name/contact_name в ответе
+    from polylog.models.calls import PIIFinding
+    from polylog.models.graph import Contact
+    from polylog.models.system import User
+
+    pii_findings = (
+        (
+            await session.execute(
+                select(PIIFinding).where(PIIFinding.call_id == call.id).order_by(PIIFinding.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    agent_name: str | None = None
+    if call.agent_user_id:
+        agent = await session.get(User, call.agent_user_id)
+        if agent:
+            agent_name = agent.display_name or agent.email
+    contact_name: str | None = None
+    if call.contact_id:
+        contact = await session.get(Contact, call.contact_id)
+        if contact:
+            contact_name = contact.display_name
     return CallDetail(
         **base.model_dump(),
         stage_error=call.stage_error,
@@ -224,6 +248,8 @@ async def call_detail(call_id: uuid.UUID, session: SessionDep, user: AuthDep) ->
             for s in call.segments
         ],
         metrics=call.metrics.metrics if call.metrics else None,
+        agent_name=agent_name,
+        contact_name=contact_name,
         signals=[
             {
                 "kind": sg.kind,
@@ -242,6 +268,17 @@ async def call_detail(call_id: uuid.UUID, session: SessionDep, user: AuthDep) ->
                 "model_id": v.model_id,
             }
             for v in call.violations
+        ],
+        pii_findings=[
+            {
+                "kind": pf.kind,
+                "action": pf.action,
+                "segment_idx": pf.segment_idx,
+                "start_ms": pf.start_ms,
+                "end_ms": pf.end_ms,
+                "detector": pf.detector,
+            }
+            for pf in pii_findings
         ],
         objections=[
             {
@@ -350,12 +387,13 @@ async def set_segment_role(
 async def reprocess_call(
     call_id: uuid.UUID, session: SessionDep, settings: SettingsDep, user: AuthDep, request: Request
 ) -> CallOut:
-    """Перезапуск пайплайна (failed → discovered → done)."""
+    """Перезапуск пайплайна (failed/done → discovered → done; BUG-03: force
+    для готовых звонков — раньше кнопка репроцессинга не делала ничего)."""
     call = await session.get(Call, call_id)
     if call is None:
         raise HTTPException(404, "звонок не найден")
     try:
-        call = await process_call(session, call_id, settings, _storage(request))
+        call = await process_call(session, call_id, settings, _storage(request), force=True)
     except Exception as e:  # noqa: BLE001
         log.warning("репроцессинг %s упал: %s", call_id, e)
     await session.commit()
