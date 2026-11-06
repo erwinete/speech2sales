@@ -343,11 +343,25 @@ async def call_artifact(call_id: uuid.UUID, session: SessionDep, settings: Setti
 async def set_segment_role(
     call_id: uuid.UUID,
     idx: int,
+    request: Request,
     session: SessionDep,
     user: AuthDep,
-    speaker: Annotated[str, Form()],
 ) -> JSONResponse:
-    """Ручная правка роли реплики: labels (target_type=segment) + сегмент."""
+    """Ручная правка роли реплики (R-08, ТЗ v3.0 §8.1): speaker принимается
+    из form-data (старый UI и тесты), JSON-тела или query — без поломки
+    контракта между форматами."""
+    speaker: str | None = None
+    content_type = (request.headers.get("content-type") or "").lower()
+    if "form" in content_type:
+        form = await request.form()
+        speaker = form.get("speaker") or None
+    elif "json" in content_type:
+        try:
+            speaker = (await request.json()).get("speaker")
+        except ValueError:
+            speaker = None
+    if not speaker:
+        speaker = request.query_params.get("speaker")
     if speaker not in ("agent", "client"):
         raise HTTPException(422, "speaker: agent | client")
     from polylog.models.calls import CallSegment
@@ -388,10 +402,25 @@ async def reprocess_call(
     call_id: uuid.UUID, session: SessionDep, settings: SettingsDep, user: AuthDep, request: Request
 ) -> CallOut:
     """Перезапуск пайплайна (failed/done → discovered → done; BUG-03: force
-    для готовых звонков — раньше кнопка репроцессинга не делала ничего)."""
+    для готовых звонков — раньше кнопка репроцессинга не делала ничего).
+    R-09: перед прогоном сбрасывается состояние и удаляются старые результаты
+    анализа (Score/Signal/Violation/Objection/PIIFinding/CallMetrics), чтобы
+    при повторном пайплайне не накапливались дубли."""
     call = await session.get(Call, call_id)
     if call is None:
         raise HTTPException(404, "звонок не найден")
+    from polylog.models.calls import (
+        CallMetrics,
+        Objection,
+        PIIFinding,
+        Signal,
+        Violation,
+    )
+
+    call.state = "discovered"
+    call.stage_error = None
+    for table in (Score, Signal, Violation, Objection, PIIFinding, CallMetrics):
+        await session.execute(table.__table__.delete().where(table.call_id == call.id))
     try:
         call = await process_call(session, call_id, settings, _storage(request), force=True)
     except Exception as e:  # noqa: BLE001

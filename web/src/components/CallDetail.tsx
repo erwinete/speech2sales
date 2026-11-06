@@ -31,14 +31,7 @@ export default function CallDetail({
     const current = roleOverrides[idx] ?? detail.segments.find((s) => s.idx === idx)?.speaker;
     const next = current === "agent" ? "client" : "agent";
     setRoleOverrides((prev) => ({ ...prev, [idx]: next }));
-    void fetch(`/api/v1/calls/${detail.id}/segments/${idx}/role`, {
-      method: "POST",
-      headers: {
-        "X-Api-Key": localStorage.getItem("polylog_token") ?? "dev-insecure-token",
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({ speaker: next }),
-    });
+    void api.setSegmentRole(detail.id, idx, next);
   };
 
   const durationMs = (detail.duration_sec ?? 0) * 1000;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { CallDetailRow } from "../api";
+import { api, type CallDetailRow } from "../api";
 
 // Карточка «Риск контакта» (M5 scorecard, doc 08 §1): score/band + факторы-вклады.
 // 404 (нет звонков) — блок не показывается.
@@ -46,10 +46,8 @@ export default function ContactRisk({
       setHidden(true);
       return;
     }
-    fetch(`/api/v1/contacts/${call.contact_id}/risk`, {
-      headers: { "X-Api-Key": localStorage.getItem("polylog_token") ?? "dev-insecure-token" },
-    })
-      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+    api.contactRisk(call.contact_id)
+      .then((r) => r)
       .then((r: Risk) => {
         if (alive) setRisk(r);
       })

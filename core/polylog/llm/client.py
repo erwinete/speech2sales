@@ -15,6 +15,25 @@ TITLE = "Polylog Speech Analytics"
 class LLMError(RuntimeError):
     """Ошибка вызова внешнего LLM-эндпоинта (HTTP >= 400 или невалидный ответ)."""
 
+    def __init__(self, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+# R-11 (ТЗ v3.0 §8.1): reasoning-модели отвечают 40-90 сек — read 180 с.
+LLM_TIMEOUT = httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0)
+
+_STATUS_HINTS = {
+    401: "неверный или просроченный API-ключ",
+    402: "недостаточно кредитов на аккаунте провайдера",
+    429: "превышен лимит запросов (rate limit) — попробуйте позже",
+}
+
+
+def _llm_error(status: int, body: str) -> LLMError:
+    hint = _STATUS_HINTS.get(status, f"HTTP {status}")
+    return LLMError(f"LLM-эндпоинт: {hint} ({status}): {body[:200]}", status_code=status)
+
 
 def _headers(base_url: str, api_key: str) -> dict[str, str]:
     headers = {
@@ -36,7 +55,7 @@ async def chat_completion(
     user_prompt: str,
     temperature: float = 0.2,
     max_tokens: int = 4096,
-    timeout_s: float = 180.0,
+    timeout: httpx.Timeout | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> dict[str, Any]:
     """POST {base_url}/chat/completions. Возвращает {text, usage, model}.
@@ -51,7 +70,7 @@ async def chat_completion(
         "max_tokens": max_tokens,
     }
     try:
-        async with httpx.AsyncClient(timeout=timeout_s, transport=transport) as client:
+        async with httpx.AsyncClient(timeout=timeout or LLM_TIMEOUT, transport=transport) as client:
             resp = await client.post(
                 f"{base_url.rstrip('/')}/chat/completions",
                 headers=_headers(base_url, api_key),
@@ -60,7 +79,7 @@ async def chat_completion(
     except httpx.HTTPError as e:
         raise LLMError(f"LLM-эндпоинт недоступен: {e}") from e
     if resp.status_code >= 400:
-        raise LLMError(f"LLM-эндпоинт вернул {resp.status_code}: {resp.text[:300]}")
+        raise _llm_error(resp.status_code, resp.text)
     try:
         data = resp.json()
     except ValueError as e:
@@ -74,19 +93,19 @@ async def list_models(
     *,
     base_url: str = DEFAULT_BASE_URL,
     api_key: str,
-    timeout_s: float = 30.0,
+    timeout: httpx.Timeout | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> list[dict[str, Any]]:
     """GET {base_url}/models — список моделей с контекстом и ценами (у OpenRouter)."""
     try:
-        async with httpx.AsyncClient(timeout=timeout_s, transport=transport) as client:
+        async with httpx.AsyncClient(timeout=timeout or LLM_TIMEOUT, transport=transport) as client:
             resp = await client.get(
                 f"{base_url.rstrip('/')}/models", headers=_headers(base_url, api_key)
             )
     except httpx.HTTPError as e:
         raise LLMError(f"LLM-эндпоинт недоступен: {e}") from e
     if resp.status_code >= 400:
-        raise LLMError(f"LLM-эндпоинт вернул {resp.status_code}: {resp.text[:300]}")
+        raise _llm_error(resp.status_code, resp.text)
     data = resp.json()
     items = data.get("data") if isinstance(data, dict) else data
     out: list[dict[str, Any]] = []

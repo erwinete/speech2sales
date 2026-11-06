@@ -9,11 +9,14 @@ export interface CallFilters {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // R-01 (ТЗ v3.0 §8.1): для FormData Content-Type не выставляется — браузер
+  // сам формирует multipart/form-data с boundary, иначе FastAPI вернёт 422.
+  const isFormData = init?.body instanceof FormData;
   const res = await fetch(path, {
     ...init,
     headers: {
       "X-Api-Key": TOKEN(),
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...(init?.headers ?? {}),
     },
   });
@@ -201,6 +204,32 @@ export const api = {
   reprocess: (id: string) =>
     request<CallRow>(`/api/v1/calls/${id}/reprocess`, { method: "POST" }),
   artifact: (id: string) => request<Record<string, unknown>>(`/api/v1/calls/${id}/artifact`),
+  // R-01/UI-01: FormData — request() сам не ставит Content-Type
+  uploadCall: (form: FormData) =>
+    request<{ call: CallRow; created: boolean; message: string }>("/api/v1/calls/upload", {
+      method: "POST",
+      body: form,
+    }),
+  // R-08: роль сегмента — формой (совместимо с бэкендом)
+  setSegmentRole: (callId: string, idx: number, speaker: "agent" | "client") =>
+    request<{ call_id: string; idx: number; speaker: string }>(
+      `/api/v1/calls/${callId}/segments/${idx}/role`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ speaker }),
+      }),
+  contactRisk: (contactId: string) =>
+    request<RiskInfo>(`/api/v1/contacts/${contactId}/risk`),
+  insightsNew: () =>
+    request<{ items: {
+      id: string;
+      kind: string;
+      severity: string;
+      contact_id: string | null;
+      payload: { score?: number; band?: string; factors?: { feature: string; contribution: number; description: string }[]; contact_id?: string };
+      generated_by: string;
+      created_at: string;
+    }[] }>("/api/v1/insights?status=new"),
   stats: (f: CallFilters) => {
     const q = new URLSearchParams({ days: String(f.days ?? 30) });
     if (f.dateFrom) q.set("date_from", f.dateFrom);
@@ -215,6 +244,12 @@ export const api = {
     }>(`/api/v1/stats/summary?${q}`);
   },
   audioUrl: (id: string) => `/api/v1/calls/${id}/audio?api_key=${encodeURIComponent(TOKEN())}`,
+  // бинарный ответ (waveform) — fetch допустим только внутри api.ts (UI-01)
+  audioWaveform: (url: string): Promise<ArrayBuffer> =>
+    fetch(url).then((r) => {
+      if (!r.ok) throw new Error(`API ${r.status}`);
+      return r.arrayBuffer();
+    }),
   contactCalls: (contactId: string) =>
     request<{ total: number; items: CallRow[] }>(`/api/v1/contacts/${contactId}/calls`),
   similar: (id: string, limit = 5) =>

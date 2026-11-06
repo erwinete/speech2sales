@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { api } from "../api";
 
 // Визуальный плеер (doc 08): waveform-полоса + метки артефактов скоринга
 // (возражения — красные, сигналы — зелёные, цитаты скоринга — синие).
@@ -37,8 +38,7 @@ export default function AudioTimeline({
     let alive = true;
     (async () => {
       try {
-        const res = await fetch(audioUrl);
-        const buf = await res.arrayBuffer();
+        const buf = await api.audioWaveform(audioUrl);
         const ctx = new AudioContext();
         const audio = await ctx.decodeAudioData(buf);
         const data = audio.getChannelData(0);

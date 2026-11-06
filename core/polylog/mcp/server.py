@@ -10,7 +10,7 @@ import uuid
 from typing import Any
 
 from polylog.llm import context_builder as cb
-from polylog.pii.sanitizer import PiiSanitizer, PiiSanitizerConfig
+from polylog.pii.sanitizer import PiiSanitizerConfig, SanitizerSession
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "polylog-analytics"
@@ -116,10 +116,10 @@ TOOLS: list[dict[str, Any]] = [
 # ── регистрация алиасов сессии ──
 
 
-def _remember_aliases(registry: dict[str, str], stats) -> None:
+def _remember_aliases(registry: dict[str, str], stats: dict) -> None:
     """Алиасы [CALL_#1] → UUID сохраняются на время MCP-сессии, чтобы
     polylog_get_call_details принимал ссылку из отчёта LLM."""
-    for alias, real in getattr(stats, "alias_map", {}).items():
+    for alias, real in (stats or {}).get("alias_map", {}).items():
         if alias.startswith("[CALL_#") or alias.startswith("[CONTACT_#") or alias.startswith("[DEAL_#"):
             registry[alias] = real
 
@@ -184,28 +184,28 @@ async def _tool_call_details(session, org, registry, args) -> str:
     if data is None:
         raise ValueError(f"звонок {args.get('call_id')} не найден")
     if args.get("sanitize_pii", True):
-        sanitizer = PiiSanitizer(PiiSanitizerConfig())
+        sanitizer = SanitizerSession(PiiSanitizerConfig())
         data["call_alias"] = sanitizer.register_id("call", data["call_id"])
         data.pop("call_id", None)
         if data.get("external_id"):
-            data["external_id"] = sanitizer.sanitize_value(str(data["external_id"]), "internal_ids", "EXT")
+            data["external_id"] = sanitizer.register_internal_id(str(data["external_id"]), "EXT_")
         for f in ("phone_from", "phone_to"):
             if data.get(f):
-                data[f] = sanitizer.sanitize_phone(data[f])
+                data[f] = sanitizer.register_known_phone(data[f])
         if data.get("agent_name"):
-            data["agent_name"] = sanitizer.sanitize_value(data["agent_name"], "names")
+            data["agent_name"] = sanitizer.register_known_name(data["agent_name"])
         data = sanitizer.sanitize_obj(data)
-        _remember_aliases(registry, sanitizer.stats)
+        _remember_aliases(registry, sanitizer.summary())
     return json.dumps(data, ensure_ascii=False, indent=1)
 
 
 async def _tool_coaching(session, org, registry, args) -> str:
     items = await cb.team_coaching_summary(session, org, days=int(args.get("days", 30)))
     if args.get("sanitize_pii", True):
-        sanitizer = PiiSanitizer(PiiSanitizerConfig())
+        sanitizer = SanitizerSession(PiiSanitizerConfig())
         for it in items:
             it["agent"] = sanitizer.sanitize_value(it["agent"], "names", "AGENT")
-        _remember_aliases(registry, sanitizer.stats)
+        _remember_aliases(registry, sanitizer.summary())
     lines = ["# Коучинг-сводка команды", ""]
     lines.append("| Менеджер | Звонков | Средний балл | Возражений | Отработано | Нарушений |")
     lines.append("|---|---|---|---|---|---|")
@@ -255,13 +255,16 @@ async def handle_rpc(
     org,
     registry: dict[str, str],
 ) -> dict | None:
-    """Один запрос JSON-RPC 2.0 → ответ (None для уведомлений).
-
-    registry — карта алиасов MCP-сессии; в HTTP-режиме живёт в app.state
-    (общая на сервер), в stdio — в процессе cli.py."""
+    """Один запрос JSON-RPC 2.0 → ответ. None для уведомлений (R-07):
+    сообщения без id и любые notifications/* не получают ответа — в stdio
+    в stdout ничего не пишется, в HTTP возвращается 202/204."""
     method = payload.get("method")
     request_id = payload.get("id")
     params = payload.get("params") or {}
+    if "id" not in payload:
+        return None  # уведомление — ответ не отправляется
+    if isinstance(method, str) and method.startswith("notifications/"):
+        return None  # notifications/initialized и т.п. — даже с id
     if not isinstance(method, str):
         return _rpc_error(-32600, None, request_id)
 

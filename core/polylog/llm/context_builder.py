@@ -23,7 +23,6 @@ from polylog.models.system import User
 from polylog.pii.sanitizer import (
     PiiSanitizer,
     PiiSanitizerConfig,
-    SanitizationStats,
     estimate_tokens,
 )
 from polylog.risk.batch import compute_org_risks_batch
@@ -42,7 +41,7 @@ class ContextBundle:
         markdown: str,
         structured: dict[str, Any],
         calls_count: int,
-        stats: SanitizationStats | None = None,
+        stats: dict[str, Any] | None = None,
     ):
         self.mode = mode
         self.markdown = markdown
@@ -591,11 +590,12 @@ def apply_pii(
     bundle: ContextBundle,
     config: PiiSanitizerConfig | None = None,
 ) -> ContextBundle:
-    """Очистка пакета и markdown через PiiSanitizer (in-place на копии).
+    """Очистка пакета и markdown через SanitizerSession (ТЗ v3.0 §8.3).
 
-    Порядок: структурные ID → алиасы [CALL_#N]; телефоны → [ТЕЛЕФОН_N] (один
-    ключ с текстовыми номерами); имена → [ФИО_N] с последующей заменой в
-    репликах (replace_known); затем текстовые поля и markdown."""
+    Порядок: структурные ID → алиасы [CALL_#1]/[CONTACT_#1]; телефоны →
+    [ТЕЛЕФОН_1] (один ключ с текстовыми номерами); имена → [ФИО_1] с
+    последующей заменой в репликах (replace_known); затем текстовые поля и
+    markdown (UUID в заголовках превращаются в [CALL_#1] через _real_index)."""
     sanitizer = PiiSanitizer(config)
     cfg = sanitizer.config
     if cfg.enabled:
@@ -605,31 +605,31 @@ def apply_pii(
                 entry["contact_id"] = sanitizer.register_id("contact", entry.get("contact_id"))
                 entry["deal_id"] = sanitizer.register_id("deal", entry.get("deal_id"))
                 if entry.get("external_id"):
-                    entry["external_id"] = sanitizer.sanitize_value(
-                        str(entry["external_id"]), "internal_ids", "EXT"
+                    entry["external_id"] = sanitizer.register_internal_id(
+                        str(entry["external_id"]), "EXT_"
                     )
                 for f in ("phone_from", "phone_to"):
                     if entry.get(f):
-                        entry[f] = sanitizer.sanitize_phone(entry[f])
+                        entry[f] = sanitizer.register_known_phone(entry[f])
                 for f in ("agent_name", "contact_name"):
                     if entry.get(f):
-                        entry[f] = sanitizer.sanitize_value(entry[f], "names")
+                        entry[f] = sanitizer.register_known_name(entry[f])
             for entry in bundle.structured.get("clients", []):
                 for sub in entry.get("calls", []):
                     sub["call_id"] = sanitizer.register_id("call", sub.get("call_id"))
                     if sub.get("external_id"):
-                        sub["external_id"] = sanitizer.sanitize_value(
-                            str(sub["external_id"]), "internal_ids", "EXT"
+                        sub["external_id"] = sanitizer.register_internal_id(
+                            str(sub["external_id"]), "EXT_"
                         )
                     for f in ("phone_from", "phone_to"):
                         if sub.get(f):
-                            sub[f] = sanitizer.sanitize_phone(sub[f])
+                            sub[f] = sanitizer.register_known_phone(sub[f])
                     for f in ("agent_name", "contact_name"):
                         if sub.get(f):
-                            sub[f] = sanitizer.sanitize_value(sub[f], "names")
+                            sub[f] = sanitizer.register_known_name(sub[f])
         bundle.structured = sanitizer.sanitize_obj(bundle.structured)
         bundle.markdown = sanitizer.sanitize_text(bundle.markdown)
-    bundle.stats = sanitizer.stats
+    bundle.stats = sanitizer.summary()
     bundle.estimated_tokens = estimate_tokens(bundle.markdown)
     return bundle
 

@@ -39,11 +39,14 @@ async def _org(session) -> Org:
     return await get_default_org(session)
 
 
-def _stats_out(stats) -> dict:
+def _stats_out(stats: dict | None) -> dict:
+    """SanitizerSession.summary() → стабильный шейп для API и llm_analysis_runs."""
+    stats = stats or {}
     return {
-        "total_redactions": stats.total_redactions,
-        "by_category": stats.by_category,
-        "alias_map": stats.alias_map,
+        "enabled": stats.get("enabled", True),
+        "total_redactions": stats.get("total_redactions", 0),
+        "by_category": stats.get("by_category", {}),
+        "alias_map": stats.get("alias_map", {}),
     }
 
 
@@ -122,7 +125,7 @@ async def analyze(body: AIAnalyzeRequest, request: Request, session: SessionDep,
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     apply_pii(bundle, body.pii)
-    alias_map = bundle.stats.alias_map if bundle.stats else {}
+    alias_map = (bundle.stats or {}).get("alias_map", {})
 
     run = LLMAnalysisRun(
         org_id=org.id,
@@ -191,7 +194,7 @@ async def analyze(body: AIAnalyzeRequest, request: Request, session: SessionDep,
 def _bundle_call_ids(bundle) -> list[str]:
     """Реальные UUID звонков пакета (из alias_map до обратной подмены)."""
     out: list[str] = []
-    for alias, real in (bundle.stats.alias_map if bundle.stats else {}).items():
+    for alias, real in ((bundle.stats or {}).get("alias_map", {})).items():
         if alias.startswith("[CALL_#"):
             out.append(real)
     return out

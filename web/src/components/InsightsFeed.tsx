@@ -59,11 +59,7 @@ export default function InsightsFeed({
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/v1/insights?status=new", {
-        headers: { "X-Api-Key": localStorage.getItem("polylog_token") ?? "dev-insecure-token" },
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setItems((await res.json()).items);
+      setItems((await api.insightsNew()).items);
     } catch {
       setItems([]);
     }
@@ -86,13 +82,10 @@ export default function InsightsFeed({
       }
       setExpanded(contactId);
       if (calls[contactId]) return;
-      const res = await fetch(`/api/v1/contacts/${contactId}/calls`, {
-        headers: { "X-Api-Key": localStorage.getItem("polylog_token") ?? "dev-insecure-token" },
-      });
-      if (res.ok) {
-        const d = await res.json();
+      try {
+        const d = await api.contactCalls(contactId);
         setCalls((prev) => ({ ...prev, [contactId]: d.items }));
-      }
+      } catch { /* контакт без звонков */ }
     },
     [expanded, calls],
   );

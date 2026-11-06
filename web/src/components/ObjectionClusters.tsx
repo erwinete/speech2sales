@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { api } from "../api";
 import { OBJECTION_RU } from "../ru";
 
 // «О чём чаще всего спорят» (doc 02 §5 objection_pattern): кластеры похожих
@@ -19,10 +20,8 @@ export default function ObjectionClusters({ onOpenCall }: { onOpenCall: (id: str
 
   useEffect(() => {
     let alive = true;
-    fetch("/api/v1/insights/objection-clusters?days=90", {
-      headers: { "X-Api-Key": localStorage.getItem("polylog_token") ?? "dev-insecure-token" },
-    })
-      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+    api.clusters(90)
+      .then((d) => d)
       .then((d) => {
         if (alive) setClusters(d.clusters);
       })

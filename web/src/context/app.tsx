@@ -1,5 +1,6 @@
 /** Контексты: авторизация (Bearer/X-Api-Key + профиль) и тосты (ТЗ §5.3). */
 import React from "react";
+import { api } from "../api";
 
 export interface AuthUser {
   id: string | null;
@@ -30,9 +31,10 @@ const Ctx = React.createContext<AuthCtx>({
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = React.useState<AuthUser | null>(null);
   React.useEffect(() => {
-    fetch("/api/v1/auth/me", { headers: { "X-Api-Key": localStorage.getItem("polylog_token") ?? "dev-insecure-token" } })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((u) => setUser(u));
+    // UI-01: все обращения к API — через api.ts, без прямых fetch
+    api.me()
+      .then((u) => setUser(u as AuthUser))
+      .catch(() => undefined);
   }, []);
   const value: AuthCtx = {
     user,

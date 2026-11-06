@@ -58,7 +58,7 @@ def test_sanitize_intro_name_and_passport_and_snils():
 def test_sanitize_custom_stop_words():
     s = PiiSanitizer(PiiSanitizerConfig(custom_stop_words=["Ромашка"]))
     t = s.sanitize_text("Проект Ромашка, менеджер Сергей Петрович")
-    assert "[СТОП_1]" in t and "Ромашка" not in t
+    assert "[СКРЫТО_1]" in t and "Ромашка" not in t
 
 
 def test_sanitize_disabled_leaves_text():
@@ -80,12 +80,12 @@ def test_sanitize_uuid_registered_becomes_call_alias():
 def test_sanitize_stats_and_alias_map():
     s = PiiSanitizer()
     s.sanitize_text("Иванов Иван Иванович оставил +7 900 111-22-33 по заказу 45120")
-    st = s.stats
-    assert st.total_redactions == 3
-    assert st.by_category["names"] == 1
-    assert st.by_category["phones_emails"] == 1
-    assert st.by_category["orders_contracts"] == 1
-    assert "[ФИО_1]" in st.alias_map and st.alias_map["[ФИО_1]"] == "Иванов Иван Иванович"
+    st = s.summary()
+    assert st["total_redactions"] == 3
+    assert st["by_category"]["names"] == 1
+    assert st["by_category"]["phones_emails"] == 1
+    assert st["by_category"]["orders_contracts"] == 1
+    assert "[ФИО_1]" in st["alias_map"] and st["alias_map"]["[ФИО_1]"] == "Иванов Иван Иванович"
 
 
 def test_sanitize_obj_recursive():
@@ -100,6 +100,45 @@ def test_sanitize_phone_metadata_matches_text_alias():
     meta = s.sanitize_phone("+7 900 111-22-33")
     text = s.sanitize_text("набран 8 (900) 111-22-33")
     assert meta == text.strip().split()[-1] or (meta == "[ТЕЛЕФОН_1]" and "[ТЕЛЕФОН_1]" in text)
+
+
+def test_detect_ru_by_uz_passports_and_phones():
+    """ТЗ v3.0 §8.2: паспорта и телефоны РФ, РБ (Беларусь), Узбекистана."""
+    from polylog.pii.detect import detect_pii
+
+    ru = detect_pii("Паспорт РФ: 45 10 123456 выдан УФМС, тел +7 (903) 123-45-67")
+    assert any(s.kind == "passport" and "123456" in s.value for s in ru)
+    assert any(s.kind == "phone" for s in ru)
+
+    by = detect_pii(
+        "Паспорт РБ: MP 1234567 (кириллицей МР 7654321), "
+        "личный номер 3120585A012PB5, тел +375 29 123-45-67"
+    )
+    assert sum(1 for s in by if s.kind == "passport") == 2, by
+    assert any(s.kind == "id_number_by" for s in by)
+    assert any(s.kind == "phone" and "375" in s.value for s in by)
+
+    uz = detect_pii(
+        "Паспорт РУз: AA 1234567, загран FA7654321, "
+        "ПИНФЛ 31504901234567, тел +998 90 123-45-67"
+    )
+    assert sum(1 for s in uz if s.kind == "passport") == 2, uz
+    assert any(s.kind == "pinfl_uz" for s in uz)
+    assert any(s.kind == "phone" and "998" in s.value for s in uz)
+
+    # слитные 10 цифр — ИНН, не паспорт РФ (разделитель обязателен)
+    assert any(s.kind == "inn" for s in detect_pii("ИНН 7707083893"))
+    assert not any(s.kind == "passport" for s in detect_pii("ИНН 7707083893"))
+
+
+def test_sanitize_passports_by_uz_aliases():
+    """Санитайзер: паспорта трёх стран → [ПАСПОРТ_N] (эталон §8.4, проверка 2)."""
+    s = PiiSanitizer(PiiSanitizerConfig())
+    cleaned = s.sanitize_text(
+        "паспорт РФ 45 10 123456, паспорт РБ MP1234567, паспорт УЗ AA7654321"
+    )
+    assert cleaned.count("[ПАСПОРТ_") == 3, cleaned
+    assert "45 10" not in cleaned and "MP1234567" not in cleaned and "AA7654321" not in cleaned
 
 
 # ── API: предпросмотр, анализ, история, MCP ──
@@ -363,3 +402,158 @@ async def test_ai_presets_endpoint(app_client):
     assert len(body["presets"]) == 5
     assert body["presets"][0]["system_prompt"]
     assert len(body["recommended_models"]) >= 4
+
+# ── R-06/R-07/R-08/R-09/R-12: регрессии ТЗ v3.0 §8.1 ──
+
+
+async def test_mcp_notifications_get_no_response(app_client):
+    """R-07: уведомления (без id) и notifications/* не получают ответа —
+    HTTP-транспорт отдаёт 204, соединение не рвётся."""
+    client, app = app_client
+    r = await client.post(
+        "/api/v1/mcp/rpc", headers=AUTH,
+        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+    )
+    assert r.status_code == 204, r.text
+    # notifications/* даже с id — без содержательного ответа
+    r = await client.post(
+        "/api/v1/mcp/rpc", headers=AUTH,
+        json={"jsonrpc": "2.0", "id": 42, "method": "notifications/initialized"},
+    )
+    assert r.status_code == 204, r.text
+    # обычный запрос продолжает работать
+    r = await client.post("/api/v1/mcp/rpc", headers=AUTH,
+                          json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    assert r.status_code == 200 and len(r.json()["result"]["tools"]) == 5
+
+
+async def test_segment_role_accepts_form_json_and_query(app_client):
+    """R-08: speaker принимается из form-data, JSON-тела и query."""
+    from conftest import wav_bytes
+
+    client, app = app_client
+    upload = await client.post(
+        "/api/v1/calls/upload", headers=AUTH,
+        files={"file": ("c.wav", wav_bytes(), "audio/wav")},
+        data={"direction": "outbound", "phone_from": "101", "phone_to": "+79001112233"},
+    )
+    assert upload.status_code in (200, 201), upload.text
+    call_id = upload.json()["call"]["id"]
+
+    # JSON-тело
+    r = await client.post(
+        f"/api/v1/calls/{call_id}/segments/0/role", headers=AUTH,
+        json={"speaker": "agent"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["speaker"] == "agent"
+
+    # query-параметр
+    r = await client.post(
+        f"/api/v1/calls/{call_id}/segments/0/role?speaker=client", headers=AUTH,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["speaker"] == "client"
+
+    # form-data (старый контракт UI)
+    r = await client.post(
+        f"/api/v1/calls/{call_id}/segments/0/role",
+        headers={**AUTH, "Content-Type": "application/x-www-form-urlencoded"},
+        content=b"speaker=agent",
+    )
+    assert r.status_code == 200, r.text
+
+
+async def test_reprocess_clears_old_results(app_client):
+    """R-09: репроцессинг удаляет старые Score/Objection перед прогоном —
+    дубли не накапливаются."""
+    from conftest import wav_bytes
+
+    client, app = app_client
+    upload = await client.post(
+        "/api/v1/calls/upload", headers=AUTH,
+        files={"file": ("c.wav", wav_bytes(), "audio/wav")},
+        data={"direction": "inbound", "phone_from": "+79001112233", "phone_to": "101"},
+    )
+    assert upload.status_code in (200, 201), upload.text
+    call_id = upload.json()["call"]["id"]
+
+    from sqlalchemy import func, select
+
+    from polylog.models.calls import Call, Objection, Score
+
+    sm = app.state.sessionmaker
+    async with sm() as s:
+        call = await s.get(Call, uuid_mod.UUID(call_id))
+        call.state = "failed"  # имитация: старые результаты от прошлого прогона
+        s.add(Objection(call_id=call.id, type="price", span_text="дорого",
+                        response_status="failed", confidence=0.9, model_id="test"))
+        await s.commit()
+        scores_before = (
+            (await s.execute(select(func.count()).select_from(Score).where(Score.call_id == call.id))).scalar()
+        )
+        obj_before = (
+            (await s.execute(select(func.count()).select_from(Objection).where(Objection.call_id == call.id))).scalar()
+        )
+    assert scores_before >= 1 and obj_before == 1
+
+    r = await client.post(f"/api/v1/calls/{call_id}/reprocess", headers=AUTH)
+    assert r.status_code == 200, r.text
+    assert r.json()["state"] == "done"
+
+    async with sm() as s:
+        scores_after = (
+            (await s.execute(select(func.count()).select_from(Score).where(Score.call_id == call.id))).scalar()
+        )
+        obj_after = (
+            (await s.execute(select(func.count()).select_from(Objection).where(Objection.call_id == call.id))).scalar()
+        )
+    assert scores_after <= 1, f"дубли Score после репроцесса: {scores_after}"
+    assert obj_after == 0, f"старое возражение не удалено: {obj_after}"
+
+
+async def test_auto_migrate_adds_missing_columns(tmp_path):
+    """R-12: init_db обновляет старую локальную базу (ALTER TABLE ADD COLUMN)
+    без пересоздания — колонки users.password_hash/is_active появляются."""
+    from sqlalchemy import text
+
+    from polylog.db import init_db, make_engine
+
+    url = f"sqlite+aiosqlite:///{tmp_path}/legacy.db"
+    engine = make_engine(url)
+    async with engine.begin() as conn:
+        # «старый» файл базы: таблица users без новых колонок v2.0
+        await conn.execute(text(
+            "CREATE TABLE users (id CHAR(32) PRIMARY KEY, org_id CHAR(32), "
+            "email VARCHAR(255), role VARCHAR(16), created_at TIMESTAMP)"
+        ))
+    await init_db(engine)
+
+    def _cols(sync_conn):
+        from sqlalchemy import inspect as sa_inspect
+        return {c["name"] for c in sa_inspect(sync_conn).get_columns("users")}
+
+    from sqlalchemy import inspect as sa_inspect  # noqa: F401
+
+    async with engine.begin() as conn:
+        cols = await conn.run_sync(
+            lambda c: {c2["name"] for c2 in sa_inspect(c).get_columns("users")}
+        )
+    await engine.dispose()
+    assert "password_hash" in cols and "is_active" in cols and "last_login_at" in cols
+
+    # база живая: вставка с дефолтом is_active работает
+    from polylog.db import make_sessionmaker
+
+    engine2 = make_engine(url)
+    sm = make_sessionmaker(engine2)
+    from polylog.models.system import User
+
+    async with sm() as s:
+        import uuid as _u
+        u = User(org_id=_u.uuid4(), email="x@local", role="agent")
+        s.add(u)
+        await s.commit()
+        assert u.is_active is True or u.is_active == 1
+    await engine2.dispose()
+

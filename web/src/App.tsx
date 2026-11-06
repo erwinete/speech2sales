@@ -2,6 +2,7 @@
     страницы приложения. */
 import React from "react";
 import { AuthProvider, ToastProvider, useAuth, useToast } from "./context/app";
+import { api } from "./api";
 import { Icon } from "./components/ui";
 import DashboardPage from "./pages/DashboardPage";
 import CallDetailPage from "./pages/CallDetailPage";
@@ -76,18 +77,13 @@ function UploadCallModal({ onClose, onDone }: { onClose: () => void; onDone: (ca
     if (!file || !to) { push("error", "Выберите файл и укажите номер клиента"); return; }
     setBusy(true);
     try {
+      // UI-01/R-01: загрузка через api.ts; request() не ставит Content-Type для FormData
       const form = new FormData();
       form.set("file", file);
       form.set("direction", direction);
       form.set("phone_from", from);
       form.set("phone_to", to);
-      const res = await fetch("/api/v1/calls/upload", {
-        method: "POST",
-        headers: { "X-Api-Key": localStorage.getItem("polylog_token") ?? "dev-insecure-token" },
-        body: form,
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
+      const body = await api.uploadCall(form);
       push("success", body.created ? "Звонок загружен и обработан" : "Дубликат по содержимому");
       onDone(body.call.id);
     } catch (e) {

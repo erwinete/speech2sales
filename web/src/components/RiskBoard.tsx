@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { fmtDur, StateBadge } from "../App";
-import type { CallRow } from "../api";
+import { api, type CallRow } from "../api";
 
 // «Куда позвонить в первую очередь» (doc 08 §4.1): контакты по убыванию риска.
 // Клик по строке — раскрыть последние звонки контакта; клик по звонку — открыть.
@@ -38,11 +38,8 @@ export default function RiskBoard({
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/v1/risks/top?limit=5", {
-        headers: { "X-Api-Key": localStorage.getItem("polylog_token") ?? "dev-insecure-token" },
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setRows((await res.json()).items);
+      const d = await api.risksTop(5);
+      setRows(d.items);
       setError(null);
     } catch (e) {
       setRows([]);
@@ -65,11 +62,7 @@ export default function RiskBoard({
       if (calls[cid]) return;
       setLoading(cid);
       try {
-        const res = await fetch(`/api/v1/contacts/${cid}/calls`, {
-          headers: { "X-Api-Key": localStorage.getItem("polylog_token") ?? "dev-insecure-token" },
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const d = await res.json();
+        const d = await api.contactCalls(cid);
         setCalls((prev) => ({ ...prev, [cid]: d.items }));
       } catch (e) {
         setCalls((prev) => ({ ...prev, [cid]: [] }));

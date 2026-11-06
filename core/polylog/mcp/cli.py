@@ -1,5 +1,6 @@
 """Точка входа MCP stdio (ТЗ v3.0 §4.5): python -m polylog.mcp
-Каждая строка stdin — JSON-RPC 2.0 запрос, ответ — строка stdout.
+Каждая строка stdin — JSON-RPC 2.0 запрос, ответ — строка stdout (R-06:
+stdout только для валидного JSON с flush; логи — в stderr).
 Реестр алиасов [CALL_#N] живёт в процессе, поэтому агент (Claude Code,
 Codex, ZCode) может сослаться на звонок из предыдущего вызова тулза."""
 
@@ -8,9 +9,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import sys
 
 from polylog.mcp.server import handle_rpc
+
+# R-06 (ТЗ v3.0 §8.1): в stdio-режиме stdout — только JSON-RPC. Все логи
+# Python и предупреждения SQLAlchemy/ML перенаправляются в stderr.
+logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
 
 def _build_sessionmaker(database_url: str | None):
