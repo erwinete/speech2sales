@@ -72,3 +72,15 @@ def sentiment_emoji(score: float | None) -> str:
     if score < -0.2:
         return "☹"
     return "😐"
+
+
+def sentiment_label_of_score(pos: int, neg: int) -> str:
+    """Метка тона (V5-02): positive | neutral | negative — для траектории
+    тональности по третям звонка. Порог: |pos−neg| ≥ 1 и перевес ≥ 2:1."""
+    if pos == 0 and neg == 0:
+        return "neutral"
+    if pos > neg and pos >= 2 * max(neg, 1):
+        return "positive"
+    if neg > pos and neg >= 2 * max(pos, 1):
+        return "negative"
+    return "neutral"

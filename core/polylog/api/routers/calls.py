@@ -208,13 +208,23 @@ async def call_detail(call_id: uuid.UUID, session: SessionDep, user: AuthDep) ->
     )
     # BUG-10: signals/violations/pii_findings/agent_name/contact_name в ответе
     from polylog.models.calls import PIIFinding
-    from polylog.models.graph import Contact
+    from polylog.models.graph import Contact, TextMention
     from polylog.models.system import User
 
     pii_findings = (
         (
             await session.execute(
                 select(PIIFinding).where(PIIFinding.call_id == call.id).order_by(PIIFinding.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # V5-02: извлечённые сущности (суммы, даты, email, телефоны)
+    text_mentions = (
+        (
+            await session.execute(
+                select(TextMention).where(TextMention.call_id == call.id).order_by(TextMention.created_at)
             )
         )
         .scalars()
@@ -250,6 +260,10 @@ async def call_detail(call_id: uuid.UUID, session: SessionDep, user: AuthDep) ->
         metrics=call.metrics.metrics if call.metrics else None,
         agent_name=agent_name,
         contact_name=contact_name,
+        text_mentions=[
+            {"kind": tm.kind, "value": tm.value, "segment_idx": tm.segment_idx}
+            for tm in text_mentions
+        ],
         signals=[
             {
                 "kind": sg.kind,
@@ -451,3 +465,37 @@ async def call_audio(
     session.add(AuditLog(action="audio_play", resource_type="call", resource_id=str(call.id)))
     await session.commit()
     return FileResponse(path, media_type="audio/wav", filename=path.name)
+
+
+@router.post("/{call_id}/push-crm")
+async def push_call_to_crm(
+    call_id: uuid.UUID,
+    session: SessionDep,
+    user: AuthDep,
+    request: Request,
+    body: dict | None = None,
+) -> JSONResponse:
+    """V5-05 (ТЗ v5.0 §9.1): выгрузка результата разбора в CRM — outgoing
+    webhook (body.webhook_url) или активный amocrm-коннектор организации.
+    Акт в audit_log (action=push_crm)."""
+    from polylog.ingest.crm_push import load_call_results, push_to_crm
+
+    org = await get_default_org(session)
+    call, score, objections = await load_call_results(session, org.id, call_id)
+    if call is None:
+        raise HTTPException(404, "звонок не найден")
+    webhook_url = (body or {}).get("webhook_url")
+    base_url = str(request.base_url).rstrip("/")
+    result = await push_to_crm(
+        session, org.id, call, score, objections,
+        webhook_url=webhook_url, base_url=base_url,
+        transport=getattr(request.app.state, "crm_transport", None),
+    )
+    session.add(
+        AuditLog(org_id=org.id, actor_id=user.user_id, action="push_crm",
+                 resource_type="call", resource_id=str(call.id),
+                 details={"targets": result["targets"], "sent": result["sent"],
+                          "errors": result["errors"][:3]}))
+    await session.commit()
+    return JSONResponse({"sent": result["sent"], "targets": result["targets"],
+                         "errors": result["errors"], "note": result["note"]})

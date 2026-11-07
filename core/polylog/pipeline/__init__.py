@@ -30,6 +30,7 @@ from polylog.models.calls import (
     Violation,
 )
 from polylog.models.enums import CallState, advance
+from polylog.models.graph import TextMention
 from polylog.models.system import Rubric
 from polylog.nlp.rules import Finding, agent_open_questions, detect_findings
 from polylog.pii.detect import detect_pii
@@ -220,9 +221,36 @@ def compute_metrics(utterances: list[dict]) -> dict:
             questions["total"] += 1
             questions["agent" if u["speaker"].startswith("agent") else "client"] += 1
     pauses = [g for g in gaps if g >= 2000]  # порог паузы 2 c
-    from polylog.nlp.sentiment import client_sentiment
+    from polylog.nlp.sentiment import client_sentiment, sentiment_label_of_score
 
-    return {
+    # ── V5-02 (ТЗ v5.0 §9.2-2): расширенные метрики речи ──
+    # wpm: слов в минуту по ролям
+    words_by_role: dict[str, int] = {}
+    for u in utterances:
+        role = "agent" if u["speaker"].startswith("agent") else "client"
+        words_by_role[role] = words_by_role.get(role, 0) + len((u["text"] or "").split())
+    wpm = {
+        role: round(words_by_role.get(role, 0) / max(speech_by_role.get(role, 0) / 60000, 0.05), 1)
+        for role in ("agent", "client")
+    }
+    # interruptions: наложение таймкодов или пауза < 150 мс после длинной реплики (>= 1500 мс)
+    interruptions = 0
+    prev_u: dict | None = None
+    for u in utterances:
+        if prev_u is not None and u["speaker"] != prev_u["speaker"]:
+            overlap = u["start_ms"] < prev_u["end_ms"]
+            quick = 0 <= u["start_ms"] - prev_u["end_ms"] < 150 and (prev_u["end_ms"] - prev_u["start_ms"]) >= 1500
+            if overlap or quick:
+                interruptions += 1
+        prev_u = u
+    # longest_monologue_sec: самый длинный непрерывный монолог по ролям
+    monologue: dict[str, int] = {"agent": 0, "client": 0}
+    for u in utterances:
+        role = "agent" if u["speaker"].startswith("agent") else "client"
+        dur = max(0, u["end_ms"] - u["start_ms"])
+        monologue[role] = max(monologue.get(role, 0), dur)
+
+    metrics = {
         "talk_ratio": {
             role: round(d / speech_total, 4) if speech_total else 0.0
             for role, d in speech_by_role.items()
@@ -234,7 +262,36 @@ def compute_metrics(utterances: list[dict]) -> dict:
         },
         "questions": questions,
         "client_sentiment": client_sentiment(utterances),
+        "wpm": wpm,
+        "interruptions": interruptions,
+        "longest_monologue_sec": {
+            "agent": round(monologue["agent"] / 1000, 1),
+            "client": round(monologue["client"] / 1000, 1),
+        },
+        "sentiment_trajectory": _sentiment_trajectory(utterances, sentiment_label_of_score),
     }
+    return metrics
+
+
+def _sentiment_trajectory(utterances: list[dict], label_of) -> dict:
+    """Траектория тона клиента по третям звонка (V5-02): начало → середина →
+    финал; labels из клиентских реплик каждой трети."""
+    client_utts = [u for u in utterances if u.get("speaker") == "client"]
+    if not client_utts:
+        return {"trajectory": [], "final": "neutral"}
+    third = max(1, len(client_utts) // 3)
+    parts = [client_utts[i:i + third] for i in range(0, len(client_utts), third)][:3]
+    trajectory: list[str] = []
+    for part in parts:
+        pos = neg = 0
+        for u in part:
+            from polylog.nlp.sentiment import sentiment_of_text
+
+            p, n = sentiment_of_text(u.get("text") or "")
+            pos += p
+            neg += n
+        trajectory.append(label_of(pos, neg))
+    return {"trajectory": trajectory, "final": trajectory[-1] if trajectory else "neutral"}
 
 
 async def stage_analyze(session: AsyncSession, call: Call, storage: Storage, settings: Settings) -> None:
@@ -246,6 +303,15 @@ async def stage_analyze(session: AsyncSession, call: Call, storage: Storage, set
 
     await session.execute(delete(CallMetrics).where(CallMetrics.call_id == call.id))
     metrics = compute_metrics(seg_dicts) if seg_dicts else {}
+    if seg_dicts:
+        # V5-02: стадии диалога в metrics + текстовые упоминания в TextMention
+        from polylog.nlp.stages import detect_dialog_stages, extract_text_mentions
+
+        metrics["stages"] = detect_dialog_stages(seg_dicts)
+        await session.execute(delete(TextMention).where(TextMention.call_id == call.id))
+        for m in extract_text_mentions(seg_dicts):
+            session.add(TextMention(call_id=call.id, segment_idx=m["segment_idx"],
+                                    kind=m["kind"], value=m["value"], confidence=None))
 
     await session.execute(delete(Objection).where(Objection.call_id == call.id))
     await session.execute(delete(Signal).where(Signal.call_id == call.id))

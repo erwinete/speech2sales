@@ -153,3 +153,77 @@ def predict(f) -> dict[str, Any] | None:
     except Exception as e:  # noqa: BLE001 — любая ошибка модели → фолбэк
         log.warning("catboost-инференс не удался, откат на scorecard: %s", e)
         return None
+
+
+async def train_from_db(session, org_id) -> dict[str, Any]:
+    """V5-04 (ТЗ v5.0 §9.1): авто-обучение CatBoost из БД — фичи контактов
+    (compute_org_risks_batch) + метки из закрытых сделок deals (won=0, lost=1).
+    Обученная модель сохраняется в MODEL_PATH и регистрируется в models_registry.
+    Возвращает {samples, model_path, registered} или ошибку при N < N_MIN."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from polylog.models.graph import Deal
+    from polylog.models.system import ModelRegistry
+    from polylog.risk.batch import compute_org_risks_batch
+
+    now = datetime.now(UTC)
+    deals = (
+        (
+            await session.execute(
+                select(Deal).where(
+                    Deal.org_id == org_id,
+                    Deal.contact_id.is_not(None),
+                    Deal.status.in_(("won", "lost")),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(deals) < N_MIN_OUTCOMES:
+        raise ValueError(f"мало закрытых сделок: {len(deals)} < {N_MIN_OUTCOMES} (won/lost)")
+
+    contact_ids = list({d.contact_id for d in deals})
+    risks = await compute_org_risks_batch(session, org_id, contact_ids=contact_ids)
+    label_by_contact = {d.contact_id: (1 if d.status == "lost" else 0) for d in deals}
+
+    rows: list[tuple[list[float], int]] = []
+    for cid, risk in risks.items():
+        label = label_by_contact.get(cid)
+        if label is None:
+            continue
+        feats = risk.get("features", {})
+        from polylog.risk.scorecard import AccountFeatures
+
+        f = AccountFeatures(
+            days_silence=int(feats.get("days_silence") or 0),
+            unanswered_ratio=float(feats.get("unanswered_ratio") or 0.0),
+            unhandled_ratio=float(feats.get("unhandled_ratio") or 0.0),
+            avg_score=feats.get("avg_score"),
+            chain_depth=int(feats.get("calls_total") or 0),
+        )
+        rows.append((feature_vector(f), label))
+
+    result = train(rows)
+    registered = False
+    try:
+        session.add(
+            ModelRegistry(
+                kind="classifier",
+                model_id="risk-catboost",
+                version=datetime.now(UTC).strftime("%Y%m%d%H%M"),
+                license="AGPL-3.0",
+                dim=len(FEATURES),
+                params={"samples": result["samples"], "features": list(FEATURES),
+                        "trained_at": now.isoformat()},
+                status="active",
+            )
+        )
+        registered = True
+    except Exception as e:  # noqa: BLE001 — регистрация не роняет обучение
+        log.warning("models_registry недоступен: %s", e)
+    result["registered"] = registered
+    result["labels"] = {"lost": sum(1 for _, y in rows if y == 1), "won": sum(1 for _, y in rows if y == 0)}
+    return result

@@ -156,12 +156,26 @@ export default function AiLabPage({ onOpenCall }: { onOpenCall: (id: string) => 
   const [decodeAliases, setDecodeAliases] = React.useState(false);
   // DEF-03: потоковый вывод отчёта через POST /ai/analyze/stream
   const [streaming, setStreaming] = React.useState(true);
+  // V5-06: Map-Reduce по батчам из 15 звонков (для больших выборок)
+  const [mapReduce, setMapReduce] = React.useState(false);
+  // V5-03: сценарий тренажёра из кластера возражений
+  const [scenarioBusy, setScenarioBusy] = React.useState(false);
   const [reasoning, setReasoning] = React.useState("");
   // DEF-07: предвыборка из других экранов (?mode=…&call_ids=…&agent_name=…&risk_band=…)
   const [callIds, setCallIds] = React.useState<string[]>([]);
 
   const [mcpCfg, setMcpCfg] = React.useState<Awaited<ReturnType<typeof api.mcpConfig>> | null>(null);
   const [harness, setHarness] = React.useState("claude_code");
+  // V5-06: интерактивный MCP Playground (тест тулзов/ресурсов/промптов в браузере)
+  const [pgMethod, setPgMethod] = React.useState("tools/list");
+  const [pgTool, setPgTool] = React.useState("polylog_get_problematic_calls");
+  const [pgToolArgs, setPgToolArgs] = React.useState('{"days": 30}');
+  const [pgResource, setPgResource] = React.useState("polylog://stats/summary");
+  const [pgPrompt, setPgPrompt] = React.useState("churn_audit");
+  const [pgRequest, setPgRequest] = React.useState("");
+  const [pgResponse, setPgResponse] = React.useState("");
+  const [pgMs, setPgMs] = React.useState<number | null>(null);
+  const [pgBusy, setPgBusy] = React.useState(false);
 
   React.useEffect(() => {
     api.aiPresets().then((p) => {
@@ -225,6 +239,29 @@ export default function AiLabPage({ onOpenCall }: { onOpenCall: (id: string) => 
     setTab("llm");
   };
 
+  // V5-03: сценарий тренажёра из кластера возражений текущих фильтров
+  const makeClusterScenario = async () => {
+    setScenarioBusy(true);
+    try {
+      const scn = await api.scenarioFromCluster({
+        days,
+        limit: 10,
+        objection_type: objectionType || null,
+      });
+      const blob = new Blob([JSON.stringify(scn, null, 1)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${scn.scenario_id}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      push("success", `Сценарий «${scn.title}» готов`);
+    } catch (e) {
+      push("error", `Сценарий: ${String(e).slice(0, 140)}`);
+    } finally {
+      setScenarioBusy(false);
+    }
+  };
+
   const runAnalysis = async () => {
     if (!userPrompt.trim()) { push("error", "Напишите задание для ИИ или выберите пресет"); return; }
     if (!apiKey.trim()) { push("error", "Укажите API-ключ провайдера"); return; }
@@ -241,9 +278,10 @@ export default function AiLabPage({ onOpenCall }: { onOpenCall: (id: string) => 
       user_prompt: userPrompt,
       temperature,
       max_tokens: maxTokens,
+      map_reduce: mapReduce,
     };
     try {
-      if (streaming) {
+      if (streaming && !mapReduce) {
         // DEF-03: SSE-стриминг — чанки content/reasoning появляются по мере генерации
         let acc = "";
         let aliases: Record<string, string> = {};
@@ -301,6 +339,40 @@ export default function AiLabPage({ onOpenCall }: { onOpenCall: (id: string) => 
     a.download = `polylog-ai-bundle-${Date.now()}.${kind}`;
     a.click();
     URL.revokeObjectURL(a.href);
+  };
+
+  // V5-06: MCP Playground — прямой JSON-RPC вызов POST /api/v1/mcp/rpc
+  const runMcpCall = async () => {
+    setPgBusy(true);
+    setPgRequest("");
+    setPgResponse("");
+    setPgMs(null);
+    const id = Date.now();
+    let payload: Record<string, unknown>;
+    if (pgMethod === "tools/call") {
+      let args: Record<string, unknown> = {};
+      try { args = JSON.parse(pgToolArgs || "{}"); } catch { args = {}; }
+      payload = { jsonrpc: "2.0", id, method: "tools/call",
+                  params: { name: pgTool, arguments: args } };
+    } else if (pgMethod === "resources/read") {
+      payload = { jsonrpc: "2.0", id, method: "resources/read", params: { uri: pgResource } };
+    } else if (pgMethod === "prompts/get") {
+      payload = { jsonrpc: "2.0", id, method: "prompts/get", params: { name: pgPrompt } };
+    } else {
+      payload = { jsonrpc: "2.0", id, method: pgMethod };
+    }
+    setPgRequest(JSON.stringify(payload, null, 1));
+    const t0 = performance.now();
+    try {
+      const resp = await api.mcpRpc(payload);
+      setPgMs(Math.round(performance.now() - t0));
+      setPgResponse(JSON.stringify(resp, null, 1));
+    } catch (e) {
+      setPgMs(Math.round(performance.now() - t0));
+      setPgResponse(`Ошибка вызова: ${String(e).slice(0, 300)}`);
+    } finally {
+      setPgBusy(false);
+    }
   };
 
   const copyText = async (text: string, label: string) => {
@@ -531,6 +603,19 @@ export default function AiLabPage({ onOpenCall }: { onOpenCall: (id: string) => 
               <input type="checkbox" checked={streaming} onChange={(e) => setStreaming(e.target.checked)} />
               <span>Потоковый вывод (SSE)<br /><small>отчёт появляется чанками по мере генерации</small></span>
             </label>
+            {limit > 20 && (
+              <label className="pii-chip" style={{ marginBottom: 8 }}>
+                <input type="checkbox" checked={mapReduce} onChange={(e) => setMapReduce(e.target.checked)} />
+                <span>Глубокий Map-Reduce по батчам (15 звонков)<br />
+                  <small>Map: выжимки фактов по батчам параллельно; Reduce: мастер-отчёт. Отключает SSE.</small></span>
+              </label>
+            )}
+            <label className="pii-chip" style={{ marginBottom: 8 }}>
+              <input type="checkbox" disabled={scenarioBusy} checked={false}
+                onChange={() => void makeClusterScenario()} />
+              <span>Сценарий тренажёра из кластера возражений (V5-03)<br />
+                <small>скачивает .json по текущим фильтрам возражений</small></span>
+            </label>
             <button className="primary" disabled={analyzing} onClick={() => void runAnalysis()} style={{ width: "100%", padding: "10px 0" }}>
               <Icon name="sparkles" size={15} /> {analyzing ? "ИИ анализирует…" : "Запустить глубокий ИИ-анализ"}
             </button>
@@ -648,6 +733,75 @@ export default function AiLabPage({ onOpenCall }: { onOpenCall: (id: string) => 
               <button disabled={!preview} onClick={() => copyText(preview ? `${userPrompt || "Проанализируй данные."}\n\n---\n\n${preview.context_preview}` : "", "Пакет")}><Icon name="copy" size={14} /> Копировать промпт + данные</button>
             </div>
             {!preview && <small className="muted" style={{ display: "block", marginTop: 8 }}>Сначала сделайте «Предпросмотр выборки» в блоке выше.</small>}
+          </div>
+        </div>
+      )}
+
+      {/* V5-06 (ТЗ v5.0 §9.2-4): интерактивный MCP Playground */}
+      {tab === "mcp" && (
+        <div className="card">
+          <div className="card-title">
+            <h3>Тестирование MCP-сервера прямо в браузере (MCP Playground)</h3>
+          </div>
+          <div className="filter-bar" style={{ margin: "8px 0" }}>
+            <select value={pgMethod} onChange={(e) => setPgMethod(e.target.value)}>
+              <option value="tools/list">tools/list</option>
+              <option value="tools/call">tools/call</option>
+              <option value="resources/list">resources/list</option>
+              <option value="resources/read">resources/read</option>
+              <option value="prompts/list">prompts/list</option>
+              <option value="prompts/get">prompts/get</option>
+            </select>
+            {pgMethod === "tools/call" && (
+              <>
+                <select value={pgTool} onChange={(e) => setPgTool(e.target.value)}>
+                  {(mcpCfg?.tools ?? []).map((tl) => (
+                    <option key={tl.name} value={tl.name}>{tl.name}</option>
+                  ))}
+                </select>
+                <input
+                  value={pgToolArgs}
+                  onChange={(e) => setPgToolArgs(e.target.value)}
+                  placeholder='{"days": 30}'
+                  style={{ width: 260, fontFamily: "var(--font-mono)", fontSize: 12 }}
+                />
+              </>
+            )}
+            {pgMethod === "resources/read" && (
+              <select value={pgResource} onChange={(e) => setPgResource(e.target.value)}>
+                <option value="polylog://stats/summary">polylog://stats/summary</option>
+                <option value="polylog://rubrics/active">polylog://rubrics/active</option>
+                <option value="polylog://risks/top">polylog://risks/top</option>
+                <option value="polylog://managers/leaderboard">polylog://managers/leaderboard</option>
+              </select>
+            )}
+            {pgMethod === "prompts/get" && (
+              <input
+                value={pgPrompt}
+                onChange={(e) => setPgPrompt(e.target.value)}
+                placeholder="churn_audit"
+                style={{ width: 220 }}
+              />
+            )}
+            <button className="primary" disabled={pgBusy} onClick={() => void runMcpCall()}>
+              {pgBusy ? "Выполняется…" : "Выполнить MCP-вызов (POST /api/v1/mcp/rpc)"}
+            </button>
+          </div>
+          <div className="ai-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+            <div>
+              <small className="muted">JSON-RPC 2.0 запрос</small>
+              <pre className="mono" style={{ background: "var(--bg-subtle)", padding: 10, borderRadius: 8, fontSize: 12, maxHeight: 260, overflow: "auto" }}>
+                {pgRequest || "— выберите метод и выполните вызов"}
+              </pre>
+            </div>
+            <div>
+              <small className="muted">
+                Ответ сервера{pgMs != null ? ` · ${pgMs} мс` : ""}
+              </small>
+              <pre className="mono" style={{ background: "var(--bg-subtle)", padding: 10, borderRadius: 8, fontSize: 12, maxHeight: 260, overflow: "auto" }}>
+                {pgResponse || "—"}
+              </pre>
+            </div>
           </div>
         </div>
       )}

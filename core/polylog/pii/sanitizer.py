@@ -23,6 +23,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from polylog.pii.detect import PIISpan, detect_pii
+from polylog.pii.spoken_numbers import denormalize_spoken_numbers
 
 _UUID_RE = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
@@ -198,7 +199,9 @@ class SanitizerSession:
     def sanitize_text(self, text: str) -> str:
         if not text or not self.config.enabled:
             return text
-        out = text
+        # 0a) V5-01: продиктованные голосом числа («сорок пять десять …») и
+        # фонетические серии («эм эр») → цифры, иначе \d-детекторы их пропускают
+        out = denormalize_spoken_numbers(text)
 
         # 0) стоп-слова пользователя (Р-05: замена до остальных проходов)
         for custom in self.config.custom_stop_words:

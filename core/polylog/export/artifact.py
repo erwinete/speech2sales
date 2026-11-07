@@ -58,6 +58,13 @@ def build_call_artifact(
             for s in segments
         ],
         "metrics": metrics,
+        # V5-02: стадии диалога и траектория тона клиента — по схеме
+        # call-artifacts (unclassified в enum не входит — фильтруется)
+        "stages": [
+            s for s in ((metrics or {}).get("stages") or []) if s.get("stage") != "unclassified"
+        ],
+        "sentiment": (metrics or {}).get("sentiment_trajectory")
+        or {"trajectory": [], "final": "neutral"},
         "objections": [
             {
                 "id": f"obj-{o.id}",

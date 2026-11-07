@@ -10,7 +10,7 @@ from sqlalchemy import select
 from polylog.api.deps import AdminDep, AuthDep, SessionDep
 from polylog.api.schemas.settings import LexiconEntryCreate, RubricUpdate
 from polylog.models.calls import Call, CallMetrics, CallSegment, Objection, PIIFinding, Score, Signal, Violation
-from polylog.models.system import AuditLog, LexiconEntry, Org, Rubric
+from polylog.models.system import AuditLog, LexiconEntry, ModelRegistry, Org, Rubric
 
 router = APIRouter(prefix="/api/v1", tags=["settings"])
 
@@ -421,5 +421,52 @@ async def list_audit(
                 "created_at": r.created_at.isoformat(),
             }
             for r in rows
+        ]
+    }
+
+
+@router.post("/settings/models/train-risk")
+async def train_risk_model(session: SessionDep, _: AdminDep) -> dict:
+    """V5-04 (ТЗ v5.0 §9.1): авто-обучение CatBoost по закрытым сделкам
+    (won/lost) с регистрацией в models_registry. 422 — исходов меньше N_MIN."""
+    from polylog.risk.model import N_MIN_OUTCOMES, train_from_db
+
+    org = await _org(session)  # noqa: F841 — скоуп будущих фильтров обучения
+    try:
+        result = await train_from_db(session, org.id)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(422, str(e)) from e
+    await session.commit()
+    return {"status": "trained", "n_min": N_MIN_OUTCOMES, **result}
+
+
+@router.get("/settings/models")
+async def list_models_registry(session: SessionDep, _: AuthDep) -> dict:
+    """Модели в реестре (V5-04): статус обучения риск-модели."""
+    rows = (
+        (
+            await session.execute(
+                select(ModelRegistry).where(ModelRegistry.status == "active")
+                .order_by(ModelRegistry.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "id": str(m.id),
+                "kind": m.kind,
+                "model_id": m.model_id,
+                "version": m.version,
+                "dim": m.dim,
+                "params": m.params,
+                "status": m.status,
+                "created_at": m.created_at.isoformat(),
+            }
+            for m in rows
         ]
     }

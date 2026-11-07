@@ -85,6 +85,7 @@ export interface CallDetailRow extends CallRow {
   metrics: Record<string, unknown> | null;
   signals: SignalRow[];
   violations: ViolationRow[];
+  text_mentions?: { kind: string; value: string; segment_idx: number | null }[];
   objections: {
     type: string;
     span_text: string;
@@ -446,6 +447,26 @@ export const api = {
     request<AiRunDetail>(`/api/v1/ai/runs/${id}`),
   mcpConfig: (sanitizePii = true) =>
     request<McpConfig>(`/api/v1/ai/mcp-config?sanitize_pii=${sanitizePii}`),
+  mcpRpc: (payload: Record<string, unknown>) =>
+    request<Record<string, unknown>>("/api/v1/mcp/rpc", {
+      method: "POST", body: JSON.stringify(payload),
+    }),
+  // V5-03: сценарий тренажёра (Слой B)
+  scenarioFromCall: (id: string) =>
+    request<TrainerScenario>(`/api/v1/calls/${id}/scenario`),
+  scenarioFromCluster: (body: { days?: number; limit?: number; objection_type?: string | null }) =>
+    request<TrainerScenario>("/api/v1/exports/scenario-from-cluster", {
+      method: "POST", body: JSON.stringify(body),
+    }),
+  exportsHistory: () =>
+    request<{ items: ExportJobRow[] }>("/api/v1/exports"),
+  // V5-05: выгрузка результата в CRM
+  pushCrm: (id: string, body: { webhook_url?: string } = {}) =>
+    request<{ sent: number; targets: string[]; errors: string[]; note: string }>(
+      `/api/v1/calls/${id}/push-crm`, { method: "POST", body: JSON.stringify(body) }),
+  // V5-02: воронка стадий диалога
+  stagesFunnel: (days = 30) =>
+    request<StagesFunnel>(`/api/v1/analytics/stages-funnel?days=${days}`),
 };
 
 // ── v2 management API (ТЗ §7.3) ──
@@ -726,4 +747,46 @@ export interface McpConfig {
 export interface AiStreamEvent {
   type: "meta" | "reasoning" | "content" | "done" | "error";
   data: Record<string, unknown>;
+}
+
+
+// ── ТЗ v5.0 (V5-02/03/05/06) ──
+
+export interface AiAnalyzeStreamRequest extends AiAnalyzeRequest {
+  map_reduce?: boolean;
+}
+
+export interface TrainerScenario {
+  schema_version: string;
+  scenario_id: string;
+  spec: string;
+  title: string;
+  description?: string | null;
+  persona: Record<string, unknown>;
+  objections: {
+    id: string;
+    trigger_phrases: string[];
+    ideal_responses: { text: string; why?: string | null }[];
+    bad_responses?: { text: string; why?: string | null }[];
+    difficulty?: number;
+  }[];
+  success_criteria: { id: string; description: string; weight: number }[];
+  metadata: Record<string, unknown>;
+}
+
+export interface ExportJobRow {
+  id: string;
+  kind: string;
+  filter_spec: Record<string, unknown>;
+  status: string;
+  file_key: string | null;
+  created_at: string;
+}
+
+export interface StagesFunnel {
+  days: number;
+  calls_analyzed: number;
+  calls_with_stages: number;
+  avg_depth: number;
+  items: { stage: string; stage_ru: string; calls_reached: number; conversion: number }[];
 }

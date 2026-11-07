@@ -320,3 +320,61 @@ async def managers(session: SessionDep, _: AuthDep, days: Annotated[int, Query(g
         })
     items.sort(key=lambda x: -(x["avg_score"] or 0))
     return JSONResponse({"items": items, "total": len(items)})
+
+
+@router.get("/analytics/stages-funnel")
+async def stages_funnel(
+    session: SessionDep, _: AuthDep, days: Annotated[int, Query(ge=1, le=365)] = 30
+) -> JSONResponse:
+    """Воронка стадий диалога (V5-02, ТЗ v5.0 §9.2-2): на каком этапе скрипта
+    обрываются звонки — число звонков, достигших каждой из 8 стадий, и средняя
+    глубина прохождения."""
+    from polylog.nlp.stages import DIALOG_STAGES
+
+    org = await get_default_org(session)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    rows = (
+        (
+            await session.execute(
+                select(CallMetrics.metrics)
+                .select_from(Call)
+                .join(CallMetrics, CallMetrics.call_id == Call.id)
+                .where(Call.org_id == org.id, Call.state == "done", Call.started_at >= cutoff)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    reached = {stage: 0 for stage in DIALOG_STAGES}
+    calls_with_stages = 0
+    depths: list[int] = []
+    for metrics in rows:
+        stages = (metrics or {}).get("stages") or []
+        seen = [s["stage"] for s in stages if s.get("stage") in reached]
+        if not seen:
+            continue
+        calls_with_stages += 1
+        depths.append(len(seen))
+        for stage in dict.fromkeys(seen):  # уникальные в порядке прохождения
+            reached[stage] += 1
+    items = [
+        {
+            "stage": stage,
+            "stage_ru": {
+                "greeting": "Приветствие", "identification": "Знакомство",
+                "qualification": "Квалификация", "presentation": "Презентация",
+                "objection_handling": "Возражения", "negotiation": "Торговля",
+                "closing": "Закрытие", "goodbye": "Прощание",
+            }[stage],
+            "calls_reached": reached[stage],
+            "conversion": round(reached[stage] / calls_with_stages, 3) if calls_with_stages else 0.0,
+        }
+        for stage in DIALOG_STAGES
+    ]
+    return JSONResponse({
+        "days": days,
+        "calls_analyzed": len(rows),
+        "calls_with_stages": calls_with_stages,
+        "avg_depth": round(sum(depths) / len(depths), 2) if depths else 0.0,
+        "items": items,
+    })

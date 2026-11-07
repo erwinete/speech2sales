@@ -4,7 +4,7 @@ import React from "react";
 import {
   Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, Tooltip, XAxis, YAxis,
 } from "recharts";
-import { api, type CallFilters, type CallRow, type StatsSummaryV2 } from "../api";
+import { api, type CallFilters, type CallRow, type StagesFunnel, type StatsSummaryV2 } from "../api";
 import { ru, OBJECTION_RU } from "../ru";
 import { Badge, EmptyState, Skeleton, Tabs, scoreTone } from "../components/ui";
 import { fmtDur, StateBadge } from "../App";
@@ -29,6 +29,7 @@ export default function DashboardPage({ route, onCallsLoaded, onOpenCall, onOpen
   const [page, setPage] = React.useState(0);
   const [stats, setStats] = React.useState<StatsSummaryV2 | null>(null);
   const [points, setPoints] = React.useState<{ date: string; calls_total: number; avg_score: number | null }[] | null>(null);
+  const [funnel, setFunnel] = React.useState<StagesFunnel | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [tab, setTab] = React.useState("insights");
 
@@ -39,15 +40,17 @@ export default function DashboardPage({ route, onCallsLoaded, onOpenCall, onOpen
 
   const load = React.useCallback(async (f: CallFilters, _p: number) => {
     try {
-      const [callsRes, statsRes, tsRes] = await Promise.all([
+      const [callsRes, statsRes, tsRes, funnelRes] = await Promise.all([
         api.listCalls(f),
         api.statsV2(f),
         api.timeseries(f.days ?? 30),
+        api.stagesFunnel(f.days ?? 30).catch(() => null),
       ]);
       setCalls(callsRes.items);
       setTotal(callsRes.total);
       setStats(statsRes);
       setPoints(tsRes.points);
+      if (funnelRes) setFunnel(funnelRes);
       setError(null);
       onCallsLoaded(statsRes.done_calls);
     } catch (e) {
@@ -127,6 +130,28 @@ export default function DashboardPage({ route, onCallsLoaded, onOpenCall, onOpen
           )}
         </div>
       </div>
+
+      {/* V5-07 (ТЗ v5.0): воронка стадий диалога — где обрывается скрипт */}
+      {funnel && funnel.calls_with_stages > 0 && (
+        <div className="card">
+          <div className="card-title">
+            <h3>Воронка стадий диалога</h3>
+            <small className="muted">
+              звонков со стадиями: {funnel.calls_with_stages} · средняя глубина {funnel.avg_depth}
+            </small>
+          </div>
+          <BarChart
+            width={860} height={200}
+            data={funnel.items.map((i) => ({ name: i.stage_ru, reached: i.calls_reached }))}
+          >
+            <CartesianGrid stroke="var(--border-subtle)" />
+            <XAxis dataKey="name" fontSize={11} />
+            <YAxis fontSize={11} allowDecimals={false} />
+            <Tooltip />
+            <Bar dataKey="reached" name="Звонков достигло" fill="var(--brand-primary)" radius={[3, 3, 0, 0]} />
+          </BarChart>
+        </div>
+      )}
 
       <Tabs
         tabs={[

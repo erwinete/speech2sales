@@ -3,6 +3,7 @@ import { fmtDur, StateBadge } from "../App";
 import { api, type CallDetailRow } from "../api";
 import { OBJECTION_RU, RESPONSE_RU, ru } from "../ru";
 import AudioTimeline, { type ArtifactMarker } from "./AudioTimeline";
+import SpeechMetricsBar from "./SpeechMetricsBar";
 import ContactRisk from "./ContactRisk";
 import SimilarCalls from "./SimilarCalls";
 
@@ -124,6 +125,12 @@ export default function CallDetail({
         durationMs={durationMs}
         markers={markers}
         audioRef={audioRef}
+      />
+
+      {/* V5-07 (ТЗ v5.0): wpm, перебивания, монологи, траектория тона, стадии */}
+      <SpeechMetricsBar
+        metrics={(detail.metrics ?? null) as Record<string, unknown> | null}
+        mentions={detail.text_mentions ?? []}
       />
 
       {score && (

@@ -153,6 +153,11 @@ async def refresh_insights(session) -> dict[str, int]:
                 )
             counts["repeat_objection"] += 1
 
+    # V5-04 (M6 trend-anomaly): просадки балла, всплески возражений, рост молчания
+    from polylog.insights.anomaly import refresh_trend_anomalies
+
+    counts["trend_anomaly"] = await refresh_trend_anomalies(session)
+
     await session.commit()
     return counts
 

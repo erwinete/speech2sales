@@ -125,6 +125,17 @@ async def _prepare_analyze(body: AIAnalyzeRequest, session, user: RequireAnalyst
         )
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
+    # реальные UUID звонков — до алиасизации (нужны для Map-Reduce батчей)
+    real_call_ids: list[str] = []
+    for group in ("calls", "clients", "failed_calls"):
+        for entry in bundle.structured.get(group, []):
+            if entry.get("call_id"):
+                real_call_ids.append(str(entry["call_id"]))
+        for entry in bundle.structured.get("clients", []):
+            for sub in entry.get("calls", []):
+                if sub.get("call_id"):
+                    real_call_ids.append(str(sub["call_id"]))
+    real_call_ids = list(dict.fromkeys(real_call_ids))
     apply_pii(bundle, body.pii)
     alias_map = (bundle.stats or {}).get("alias_map", {})
 
@@ -150,26 +161,37 @@ async def _prepare_analyze(body: AIAnalyzeRequest, session, user: RequireAnalyst
     )
     session.add(run)
     await session.flush()
-    return org, bundle, run, api_key, alias_map
+    return org, bundle, run, api_key, alias_map, real_call_ids
 
 
 @router.post("/ai/analyze")
 async def analyze(body: AIAnalyzeRequest, request: Request, session: SessionDep, user: RequireAnalyst) -> JSONResponse:
     """Полный цикл: контекст → санитайзер ПДн → LLM → llm_analysis_runs + аудит."""
-    org, bundle, run, api_key, alias_map = await _prepare_analyze(body, session, user)
+    org, bundle, run, api_key, alias_map, real_call_ids = await _prepare_analyze(body, session, user)
+    transport = getattr(request.app.state, "llm_transport", None)
 
-    user_content = f"{body.user_prompt}\n\n--- Данные из «Полилога» (режим {bundle.mode}) ---\n\n{bundle.markdown}"
     try:
-        result = await llm_client.chat_completion(
-            base_url=body.base_url,
-            api_key=api_key,
-            model=body.model,
-            system_prompt=body.system_prompt or DEFAULT_SYSTEM_PROMPT,
-            user_prompt=user_content,
-            temperature=body.temperature,
-            max_tokens=body.max_tokens,
-            transport=getattr(request.app.state, "llm_transport", None),
-        )
+        if body.map_reduce and len(real_call_ids) > MAP_BATCH_SIZE:
+            # V5-06: глубокий Map-Reduce для больших выборок (батчи по 15)
+            text, usage, summaries = await _run_map_reduce(
+                session, org, body, real_call_ids, api_key, transport
+            )
+            result = {"text": text, "usage": usage}
+        else:
+            user_content = (
+                f"{body.user_prompt}\n\n"
+                f"--- Данные из «Полилога» (режим {bundle.mode}) ---\n\n{bundle.markdown}"
+            )
+            result = await llm_client.chat_completion(
+                base_url=body.base_url,
+                api_key=api_key,
+                model=body.model,
+                system_prompt=body.system_prompt or DEFAULT_SYSTEM_PROMPT,
+                user_prompt=user_content,
+                temperature=body.temperature,
+                max_tokens=body.max_tokens,
+                transport=transport,
+            )
     except llm_client.LLMError as e:
         run.status = "failed"
         run.error_message = str(e)[:500]
@@ -206,7 +228,7 @@ async def analyze_stream(
     """SSE-стриминг ИИ-анализа (DEF-03, ТЗ v4.0 §8.1): чанки `meta` (статистика
     ПДн и объём выборки до вызова LLM), `reasoning` (рассуждения reasoning-
     моделей), `content` (текст отчёта), `done` (run_id, usage), `error`."""
-    org, bundle, run, api_key, alias_map = await _prepare_analyze(body, session, user)
+    org, bundle, run, api_key, alias_map, real_call_ids = await _prepare_analyze(body, session, user)
     await session.commit()  # фиксируем run до стрима
 
     user_content = f"{body.user_prompt}\n\n--- Данные из «Полилога» (режим {bundle.mode}) ---\n\n{bundle.markdown}"
@@ -287,6 +309,71 @@ def _bundle_call_ids(bundle) -> list[str]:
         if alias.startswith("[CALL_#"):
             out.append(real)
     return out
+
+
+# ── V5-06 (ТЗ v5.0 §9.2-4): Map-Reduce для больших выборок ──
+
+MAP_BATCH_SIZE = 15
+MAP_CONCURRENCY = 3
+MAP_PROMPT = (
+    "Это БАТЧ большой выборки звонков. Извлеки структурированные факты по батчу: "
+    "ключевые возражения и их формулировки (сохраняй теги [CALL_#N]), ошибки менеджеров, "
+    "удачные цитаты, причины отказов. Кратко, списком, без повторов."
+)
+
+
+async def _map_reduce_batches(session, org, body: AIAnalyzeRequest, real_call_ids: list[str]):
+    """Фаза Map, подготовка: батчи по 15 звонков → собранные и очищенные бандлы."""
+    batches = [real_call_ids[i:i + MAP_BATCH_SIZE] for i in range(0, len(real_call_ids), MAP_BATCH_SIZE)]
+    bundles = []
+    for batch in batches:
+        bundle = await build_context(
+            session, org, mode=body.mode,
+            date_from=body.date_from, date_to=body.date_to, days=body.days,
+            agent_user_id=body.agent_user_id, agent_name=body.agent_name,
+            risk_band=body.risk_band, score_max=body.score_max,
+            direction=body.direction, min_duration_sec=body.min_duration_sec,
+            objection_type=body.objection_type, call_ids=batch,
+            limit_calls=len(batch),
+            max_context_tokens=min(body.max_context_tokens, 20000),
+            smart_compress=body.smart_compress,
+        )
+        apply_pii(bundle, body.pii)
+        bundles.append(bundle)
+    return bundles
+
+
+async def _run_map_reduce(session, org, body: AIAnalyzeRequest, real_call_ids: list[str],
+                          api_key: str, transport) -> tuple[str, dict, list[str]]:
+    """Полный Map-Reduce: параллельные выжимки по батчам (Semaphore(3)) →
+    финальный синтез по user_prompt. Возвращает (report, usage, summaries)."""
+    bundles = await _map_reduce_batches(session, org, body, real_call_ids)
+    sem = asyncio.Semaphore(MAP_CONCURRENCY)
+
+    async def _map_one(bundle) -> str:
+        async with sem:
+            r = await llm_client.chat_completion(
+                base_url=body.base_url, api_key=api_key, model=body.model,
+                system_prompt=body.system_prompt or DEFAULT_SYSTEM_PROMPT,
+                user_prompt=f"{MAP_PROMPT}\n\n{bundle.markdown}",
+                temperature=body.temperature, max_tokens=body.max_tokens,
+                transport=transport,
+            )
+            return r["text"]
+
+    summaries = list(await asyncio.gather(*[_map_one(b) for b in bundles]))
+    combined = "\n\n".join(f"## Батч {i + 1}\n{s}" for i, s in enumerate(summaries))
+    final = await llm_client.chat_completion(
+        base_url=body.base_url, api_key=api_key, model=body.model,
+        system_prompt=body.system_prompt or DEFAULT_SYSTEM_PROMPT,
+        user_prompt=(
+            f"{body.user_prompt}\n\n--- Выжимки Map-фазы по {len(summaries)} батчам "
+            f"({sum(b.calls_count for b in bundles)} звонков) ---\n\n{combined}"
+        ),
+        temperature=body.temperature, max_tokens=body.max_tokens,
+        transport=transport,
+    )
+    return final["text"], final.get("usage") or {}, summaries
 
 
 @router.get("/ai/models")

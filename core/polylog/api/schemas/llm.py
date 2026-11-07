@@ -26,6 +26,8 @@ class AIContextRequest(BaseModel):
     # DEF-03 (ТЗ v4.0 §8.1): бюджет контекстного окна и умное сжатие транскриптов
     max_context_tokens: int = 48000
     smart_compress: bool = True
+    # V5-06 (ТЗ v5.0 §9.1): Map-Reduce по батчам из 15 звонков (Semaphore(3))
+    map_reduce: bool = False
     pii: PiiSanitizerConfig = Field(default_factory=PiiSanitizerConfig)
 
 

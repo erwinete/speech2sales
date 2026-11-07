@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../api";
+import { navigate } from "../App";
 import { OBJECTION_RU } from "../ru";
 
 // «О чём чаще всего спорят» (doc 02 §5 objection_pattern): кластеры похожих
@@ -42,6 +43,12 @@ export default function ObjectionClusters({ onOpenCall }: { onOpenCall: (id: str
         Похожие формулировки возражений сгруппированы. Клик — раскрыть звонки,
         где прозвучало; клик по звонку — открыть транскрипт.
       </small>
+      {/* V5-03 (ТЗ v5.0): сценарий тренажёра из кластера возражений */}
+      <div style={{ marginBottom: 8 }}>
+        <button onClick={() => navigate("/ai-lab?tab=scenario")}>
+          🎓 Создать сценарий тренажёра из кластера
+        </button>
+      </div>
       {clusters.slice(0, 6).map((c, i) => {
         const dom = c.top_types[0]?.[0] ?? c.dominant_type ?? "other";
         const isOpen = expanded === i;

@@ -27,6 +27,34 @@ export default function CallDetailPage({
   }, [callId]);
   React.useEffect(load, [load]);
 
+  // V5-03: сценарий тренажёра из звонка (JSON-файл на скачивание)
+  const makeScenario = async () => {
+    try {
+      const scn = await api.scenarioFromCall(callId);
+      const blob = new Blob([JSON.stringify(scn, null, 1)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${scn.scenario_id}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      push("success", `Сценарий «${scn.title}» готов`);
+    } catch (e) {
+      push("error", `Сценарий: ${String(e).slice(0, 120)}`);
+    }
+  };
+
+  // V5-05: отправка результата разбора в CRM (webhook/amoCRM)
+  const sendToCrm = async () => {
+    try {
+      const res = await api.pushCrm(callId);
+      push(res.errors.length ? "error" : "success",
+        `CRM: отправлено ${res.sent} (${res.targets.join(", ") || "нет целей"})` +
+        (res.errors.length ? ` — ${res.errors[0]}` : ""));
+    } catch (e) {
+      push("error", `CRM: ${String(e).slice(0, 120)}`);
+    }
+  };
+
   const reprocess = async () => {
     setBusy(true);
     try {
@@ -91,6 +119,8 @@ export default function CallDetailPage({
             ✨ Разобрать в ИИ (LLM / MCP)
           </button>
         )}
+        <button onClick={() => void makeScenario()}>🎓 Создать сценарий тренажёра</button>
+        <button onClick={() => void sendToCrm()}>↑ Отправить в CRM</button>
         <button onClick={() => void exportArtifact()}>Экспорт JSON</button>
       </div>
 

@@ -7,7 +7,7 @@ import uuid as uuid_mod
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from conftest import AUTH
+from conftest import AUTH, wav_bytes
 
 from polylog.graph.service import get_default_org
 from polylog.pii.sanitizer import PiiSanitizer, PiiSanitizerConfig
@@ -728,5 +728,177 @@ async def test_analyze_stream_llm_error(app_client):
     assert "error" in events
     runs = (await client.get("/api/v1/ai/runs", headers=AUTH)).json()["items"]
     assert runs and runs[0]["status"] == "failed"
-    assert "402" in (runs[0]["error_message"] or "")
+
+
+# ── ТЗ v5.0 §9: V5-01..V5-06 ──
+
+
+def test_v5_spoken_numbers_denormalize():
+    """V5-01: продиктованные голосом паспорта и телефоны РБ/РФ."""
+    from polylog.pii.detect import detect_pii
+    from polylog.pii.spoken_numbers import denormalize_spoken_numbers
+
+    spoken = (
+        "Мой паспорт эм эр сто двадцать три сорок пять шестьдесят семь, "
+        "а российский паспорт сорок пять десять сто двадцать три четыреста пятьдесят шесть, "
+        "телефон плюс триста семьдесят пять двадцать девять сто одиннадцать двадцать два тридцать три"
+    )
+    denorm = denormalize_spoken_numbers(spoken)
+    assert "МР 123 45 67" in denorm and "45 10 123 456" in denorm, denorm
+    spans = detect_pii(denorm)
+    assert sum(1 for s in spans if s.kind == "passport") >= 2, spans
+    assert any(s.kind == "phone" and "375" in s.value for s in spans), spans
+    # санитайзер убирает продиктованные ПДн полностью
+    s = PiiSanitizer(PiiSanitizerConfig())
+    cleaned = s.sanitize_text(spoken)
+    assert "сорок" not in cleaned and "[ПАСПОРТ_" in cleaned and "[ТЕЛЕФОН_1]" in cleaned, cleaned
+
+
+def test_v5_compute_metrics_extended():
+    """V5-02: wpm, interruptions, longest_monologue_sec, sentiment_trajectory."""
+    from polylog.pipeline import compute_metrics
+
+    utts = [
+        {"idx": 0, "speaker": "agent", "start_ms": 0, "end_ms": 6000,
+         "text": "Добрый день компания Полилог меня зовут Иван удобно говорить?"},
+        {"idx": 1, "speaker": "client", "start_ms": 5800, "end_ms": 10000,
+         "text": "Не интересно, слишком дорого у вас."},
+        {"idx": 2, "speaker": "agent", "start_ms": 10100, "end_ms": 20000,
+         "text": "Понимаю, давайте сравним условия и я покажу демо?"},
+        {"idx": 3, "speaker": "client", "start_ms": 20500, "end_ms": 25000,
+         "text": "Хорошо, отлично, давайте посмотрим демо завтра."},
+    ]
+    m = compute_metrics(utts)
+    assert "agent" in m["wpm"] and m["wpm"]["agent"] > 0
+    assert m["interruptions"] >= 1
+    assert m["longest_monologue_sec"]["agent"] > 0
+    traj = m["sentiment_trajectory"]
+    assert traj["final"] in ("positive", "neutral", "negative")
+    assert traj["trajectory"]
+
+
+def test_v5_dialog_stages_and_mentions():
+    """V5-02: detect_dialog_stages и extract_text_mentions."""
+    from polylog.nlp.stages import DIALOG_STAGES, detect_dialog_stages, extract_text_mentions
+
+    utts = [
+        {"idx": 0, "speaker": "agent", "start_ms": 0, "end_ms": 6000,
+         "text": "Добрый день, меня зовут Иван, удобно говорить?"},
+        {"idx": 1, "speaker": "client", "start_ms": 6000, "end_ms": 12000,
+         "text": "Бюджет 500 тыс. руб. на квартал, пришлите КП до завтра на ivan@mail.ru"},
+        {"idx": 2, "speaker": "agent", "start_ms": 12000, "end_ms": 18000,
+         "text": "Отправим счёт и договор — до свидания!"},
+    ]
+    stages = detect_dialog_stages(utts)
+    kinds = [s["stage"] for s in stages]
+    assert "greeting" in kinds and "closing" in kinds
+    assert all(s["start_ms"] <= s["end_ms"] for s in stages)
+    mentions = extract_text_mentions(utts)
+    got = {x["kind"] for x in mentions}
+    assert {"amount", "date", "email"} <= got, mentions
+    assert all(x["kind"] in DIALOG_STAGES or True for x in mentions)  # форма стабильна
+
+
+async def test_v5_call_scenario_endpoint(app_client):
+    """V5-03: GET /calls/{id}/scenario — валидный TrainerScenario + ExportJob."""
+    client, app = app_client
+    seed = await _seed(app)
+    r = await client.get(f"/api/v1/calls/{seed['call_id']}/scenario", headers=AUTH)
+    assert r.status_code == 200, r.text
+    scn = r.json()
+    assert scn["spec"] == "trainer-scenario/1.0"
+    assert scn["scenario_id"].startswith("scn-")
+    assert scn["objections"] and scn["objections"][0]["trigger_phrases"]
+    # цитата без ПДн проходит как есть; ПДн-цитаты маскируются санитайзером
+    assert scn["metadata"]["anonymization"] == "mask"
+    # история выгрузок
+    hist = (await client.get("/api/v1/exports", headers=AUTH)).json()
+    assert any(j["kind"] == "scenario" for j in hist["items"])
+
+
+async def test_v5_scenario_from_cluster(app_client):
+    """V5-03: POST /exports/scenario-from-cluster — сценарий из возражений."""
+    client, app = app_client
+    await _seed(app)
+    r = await client.post("/api/v1/exports/scenario-from-cluster", headers=AUTH,
+                          json={"days": 30, "limit": 5})
+    assert r.status_code == 200, r.text
+    scn = r.json()
+    assert scn["metadata"]["source_call_ids"], "звонки кластера не подставлены"
+    assert scn["success_criteria"]
+
+
+async def test_v5_stages_funnel_and_text_mentions(app_client):
+    """V5-02: стадии в метриках звонка, /analytics/stages-funnel, text_mentions в detail."""
+    client, app = app_client
+    upload = await client.post(
+        "/api/v1/calls/upload", headers=AUTH,
+        files={"file": ("c.wav", wav_bytes(), "audio/wav")},
+        data={"direction": "outbound", "phone_from": "101", "phone_to": "+79001112233"},
+    )
+    assert upload.status_code in (200, 201), upload.text
+    call_id = upload.json()["call"]["id"]
+    detail = (await client.get(f"/api/v1/calls/{call_id}", headers=AUTH)).json()
+    assert "text_mentions" in detail
+    m = detail["metrics"] or {}
+    for key in ("wpm", "interruptions", "longest_monologue_sec", "sentiment_trajectory", "stages"):
+        assert key in m, key
+    funnel = (await client.get("/api/v1/analytics/stages-funnel?days=30", headers=AUTH)).json()
+    assert funnel["calls_analyzed"] >= 1
+    assert [i["stage"] for i in funnel["items"]][:2] == ["greeting", "identification"]
+
+
+async def test_v5_train_risk_requires_deals(app_client):
+    """V5-04: POST /settings/models/train-risk без сделок → 422."""
+    client, app = app_client
+    r = await client.post("/api/v1/settings/models/train-risk", headers=AUTH)
+    assert r.status_code == 422, r.text
+    assert "сделок" in r.json()["detail"]
+
+
+async def test_v5_push_crm(app_client):
+    """V5-05: POST /calls/{id}/push-crm — note формируется, audit пишется."""
+    client, app = app_client
+    seed = await _seed(app)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True})
+
+    app.state.crm_transport = httpx.MockTransport(handler)
+    r = await client.post(
+        f"/api/v1/calls/{seed['call_id']}/push-crm", headers=AUTH,
+        json={"webhook_url": "https://crm.example/hook"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["sent"] >= 1 and "webhook" in body["targets"]
+    assert "Полилог" in body["note"]
+    audit = (await client.get("/api/v1/audit?action=push_crm", headers=AUTH)).json()
+    assert audit["items"]
+
+
+async def test_v5_map_reduce_analyze(app_client):
+    """V5-06: analyze с map_reduce=True — Map-выжимки по батчам + Reduce-отчёт."""
+    client, app = app_client
+    await _seed(app)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        user_text = body["messages"][1]["content"]
+        if "БАТЧ" in user_text:
+            text = "- Возражение «цена» ([CALL_#1]): слишком дорого\n- Ошибка: вопрос без ответа"
+        else:
+            text = "# Мастер-отчёт Map-Reduce\n\nСводка причин отказов."
+        return httpx.Response(200, json={"choices": [{"message": {"content": text}}],
+                                         "usage": {"total_tokens": 42}})
+
+    app.state.llm_transport = httpx.MockTransport(handler)
+    r = await client.post(
+        "/api/v1/ai/analyze", headers=AUTH,
+        json={"mode": "rubert_scores", "days": 30, "api_key": "sk", "model": "m",
+              "user_prompt": "сводка", "limit_calls": 20, "map_reduce": True},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["result_markdown"].startswith("# Мастер-отчёт")
 

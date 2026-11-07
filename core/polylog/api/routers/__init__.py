@@ -6,6 +6,7 @@ from polylog.api.routers.auth import router as auth_router
 from polylog.api.routers.calls import router as calls_router
 from polylog.api.routers.connectors import router as connectors_router
 from polylog.api.routers.contacts import router as contacts_router
+from polylog.api.routers.exports import router as exports_router
 from polylog.api.routers.insights import router as insights_router
 from polylog.api.routers.settings import router as settings_router
 from polylog.api.routers.users import router as users_router
@@ -20,6 +21,7 @@ ALL_ROUTERS = (
     connectors_router,
     settings_router,
     ai_analysis_router,
+    exports_router,
 )
 
 __all__ = ["ALL_ROUTERS"]

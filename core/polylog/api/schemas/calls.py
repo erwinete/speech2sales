@@ -78,6 +78,12 @@ class PiiFindingOut(BaseModel):
     detector: str
 
 
+class TextMentionOut(BaseModel):
+    kind: str
+    value: str
+    segment_idx: int | None
+
+
 class CallDetail(CallOut):
     stage_error: dict[str, Any] | None
     channels_map: dict[str, str] | None
@@ -92,6 +98,7 @@ class CallDetail(CallOut):
     signals: list[SignalOut] = Field(default_factory=list)
     violations: list[ViolationOut] = Field(default_factory=list)
     pii_findings: list[PiiFindingOut] = Field(default_factory=list)
+    text_mentions: list[TextMentionOut] = Field(default_factory=list)
 
 
 class CallList(BaseModel):
