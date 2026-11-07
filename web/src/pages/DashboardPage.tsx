@@ -183,7 +183,7 @@ export default function DashboardPage({ route, onCallsLoaded, onOpenCall, onOpen
             {calls.map((c) => (
               <tr key={c.id} onClick={() => onOpenCall(c.id)}>
                 <td className="mono">{new Date(c.started_at).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" })}</td>
-                <td>{ru({ inbound: "← входящий", outbound: "→ исходящий", internal: "внутренний" }, c.direction)}</td>
+                <td>{ru({ inbound: "входящий", outbound: "исходящий", internal: "внутренний" }, c.direction)}</td>
                 <td className="mono">{c.phone_from ?? c.phone_to ?? "—"}</td>
                 <td className="mono">{fmtDur(c.duration_sec)}</td>
                 <td><Badge tone={scoreTone(null)}>—</Badge></td>

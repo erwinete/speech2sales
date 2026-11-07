@@ -47,8 +47,8 @@ export const SIGNAL_RU: Record<string, string> = {
 };
 
 export const DIRECTION_RU: Record<string, string> = {
-  inbound: "← входящий",
-  outbound: "→ исходящий",
+  inbound: "входящий",
+  outbound: "исходящий",
   internal: "внутренний",
 };
 

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { fmtDur, StateBadge } from "../App";
+import { BrutalistGlyph, type GlyphName } from "./ui/BrutalistGlyph";
 import { api, type CardCall, type ContactCard, type ContactHit } from "../api";
 import { DIRECTION_RU, OBJECTION_RU, RESPONSE_RU, ru } from "../ru";
 
-// Customer 360 (doc 03 §4, doc 08 §4.4): поиск клиента по номеру/имени →
+// Customer 360 (doc 03 §4, doc 08 §4.4): поиск клиента по номеру или имени:
 // карточка: профиль, статистика, риск, таймлайн общения, граф связей,
 // похожие звонки. Данные — /contacts/search + /contacts/{id}/card.
 
@@ -27,14 +28,21 @@ const FEATURE_RU: Record<string, string> = {
 const scoreColor = (score: number | null | undefined): string =>
   score == null ? "#888" : score < 40 ? "#c22" : score < 65 ? "#b58a00" : "#0a7d33";
 
-// Сентимент клиента −1…+1 → глиф и цвет (DoD М2)
-const sentimentEmoji = (score: number | null | undefined): string =>
-  score == null ? "" : score > 0.2 ? "😊" : score < -0.2 ? "☹" : "😐";
+// Сентимент клиента от минус 1 до плюс 1: собственные изображения-глифы (ТЗ v6.0, DoD М2)
+const sentimentGlyphName = (score: number | null | undefined): GlyphName =>
+  score == null ? "sentiment-neu" : score > 0.2 ? "sentiment-pos" : score < -0.2 ? "sentiment-neg" : "sentiment-neu";
+
+const SentimentGlyph: React.FC<{ score: number | null | undefined; size?: number }> = ({ score, size = 14 }) => (
+  <span style={{ display: "inline-flex", alignItems: "center" }} title={score != null ? score.toFixed(2) : undefined}>
+    <BrutalistGlyph name={sentimentGlyphName(score)} size={size} />
+  </span>
+);
+
 const trendLabel = (trend: number | null | undefined): string => {
   if (trend == null) return "";
-  if (trend > 0.1) return `↑ +${trend.toFixed(2)}`;
-  if (trend < -0.1) return `↓ ${trend.toFixed(2)}`;
-  return "→ стабильно";
+  if (trend > 0.1) return `рост: плюс ${trend.toFixed(2)}`;
+  if (trend < -0.1) return `спад: минус ${Math.abs(trend).toFixed(2)}`;
+  return "стабильно";
 };
 
 const fmtDate = (iso: string | null): string =>
@@ -119,7 +127,7 @@ function ContactSearch({
         }}
         style={{ color: "#06c", fontSize: 14 }}
       >
-        ← На дашборд
+        На дашборд
       </a>
       <h2 style={{ marginBottom: 4 }}>Клиенты</h2>
       <small style={{ color: "#666", display: "block", marginBottom: 12 }}>
@@ -195,7 +203,9 @@ function ContactSearch({
               )}
               {h.objections_unhandled > 0 && (
                 <span title="Не отработанные возражения" style={{ fontSize: 13, color: "#b58a00" }}>
-                  ⚠ {h.objections_unhandled}
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <BrutalistGlyph name="status-alert" size={12} /> {h.objections_unhandled}
+                  </span>
                 </span>
               )}
               {h.sentiment_last != null && (
@@ -203,8 +213,7 @@ function ContactSearch({
                   title={`Тон клиента: ${h.sentiment_last.toFixed(2)}${h.sentiment_trend != null ? `, тренд ${trendLabel(h.sentiment_trend)}` : ""}`}
                   style={{ minWidth: 46 }}
                 >
-                  {sentimentEmoji(h.sentiment_last)}
-                  {h.sentiment_trend != null && (h.sentiment_trend > 0.1 ? " ↑" : h.sentiment_trend < -0.1 ? " ↓" : "")}
+                  <SentimentGlyph score={h.sentiment_last} />
                 </span>
               )}
               <small style={{ color: "#888", minWidth: 150, textAlign: "right" }}>
@@ -264,7 +273,7 @@ function ContactCardView({
           }}
           style={{ color: "#06c", fontSize: 14 }}
         >
-          ← Все клиенты
+          Все клиенты
         </a>
         <p style={{ color: "crimson" }}>
           Не удалось загрузить карточку: {error}{" "}
@@ -284,7 +293,7 @@ function ContactCardView({
           }}
           style={{ color: "#06c", fontSize: 14 }}
         >
-          ← Все клиенты
+          Все клиенты
         </a>
         <p style={{ color: "#888" }}>Загружаем карточку…</p>
       </div>
@@ -302,7 +311,7 @@ function ContactCardView({
         }}
         style={{ color: "#06c", fontSize: 14 }}
       >
-        ← Все клиенты
+        Все клиенты
       </a>
       <h2 style={{ margin: "8px 0 2px" }}>
         {card.contact.display_name ?? "Клиент без имени"}
@@ -326,7 +335,7 @@ function ContactCardView({
               )
             }
           >
-            ✨ Разобрать в ИИ (LLM / MCP)
+            Разобрать в ИИ (LLM / MCP)
           </button>
         </div>
       )}
@@ -348,7 +357,7 @@ function ContactCardView({
         {stats.sentiment_last != null && (
           <Stat
             title="Тон клиента"
-            value={`${sentimentEmoji(stats.sentiment_last)} ${trendLabel(stats.sentiment_trend)}`}
+            value={trendLabel(stats.sentiment_trend) || "стабильно"}
             sub={stats.sentiment_trend != null ? "тренд: последний минус первый" : undefined}
           />
         )}
@@ -503,11 +512,13 @@ type TimelineEntry =
   | { kind: "call"; at: string; call: CardCall }
   | { kind: "interaction"; at: string; it: ContactCard["interactions"][number] };
 
-const KIND_GLYPH: Record<string, string> = {
-  email: "✉",
-  chat: "💬",
-  meeting: "📅",
-  sms: "✱",
+// Каналы касаний — собственные изображения-глифы (ТЗ v6.0 §4.4)
+const CHANNEL_GLYPH: Record<string, GlyphName> = {
+  email: "channel-mail",
+  chat: "channel-chat",
+  meeting: "channel-meet",
+  sms: "channel-chat",
+  call: "channel-call",
 };
 
 // Пауза между соседними событиями цепочки — «через 2 дн.», «через 3 ч»
@@ -551,8 +562,7 @@ function Timeline({ card, onOpenCall }: { card: ContactCard; onOpenCall: (id: st
                   <div style={{ width: 2, background: "#dbe2ec" }} />
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 0" }}>
-                  <span style={{ color: "#9aa7b8", fontSize: 12 }}>↓</span>
-                  <small style={{ color: "#9aa7b8", fontSize: 12 }}>{gap}</small>
+                  <small style={{ color: "var(--ink-muted)", fontSize: 12 }}>{gap}</small>
                 </div>
               </div>
             )}
@@ -563,8 +573,7 @@ function Timeline({ card, onOpenCall }: { card: ContactCard; onOpenCall: (id: st
                   style={{
                     width: 24,
                     height: 24,
-                    borderRadius: "50%",
-                    background: isLast || failed ? dotColor : "#fff",
+                    background: isLast || failed ? dotColor : "var(--bg-surface)",
                     border: `2px solid ${dotColor}`,
                     color: isLast || failed ? "#fff" : dotColor,
                     fontSize: 10,
@@ -577,7 +586,9 @@ function Timeline({ card, onOpenCall }: { card: ContactCard; onOpenCall: (id: st
                   }}
                   title={isCall ? `Шаг цепочки #${(e.call.chain_depth ?? 0) + 1}` : undefined}
                 >
-                  {isCall ? `#${(e.call.chain_depth ?? 0) + 1}` : ru(KIND_GLYPH, e.it.kind, "•")}
+                  {isCall
+                    ? `#${(e.call.chain_depth ?? 0) + 1}`
+                    : <BrutalistGlyph name={CHANNEL_GLYPH[e.it.kind] ?? "channel-crm"} size={14} />}
                 </div>
                 <div style={{ width: 2, flexGrow: 1, background: isLast ? "transparent" : "#dbe2ec" }} />
               </div>
@@ -619,7 +630,7 @@ function Timeline({ card, onOpenCall }: { card: ContactCard; onOpenCall: (id: st
                   )}
                   {e.call.sentiment != null && (
                     <span title={`Тон клиента: ${e.call.sentiment.toFixed(2)}`}>
-                      {sentimentEmoji(e.call.sentiment)}
+                      <SentimentGlyph score={e.call.sentiment} />
                     </span>
                   )}
                   {e.call.objections.map((o, j) => (
@@ -635,10 +646,12 @@ function Timeline({ card, onOpenCall }: { card: ContactCard; onOpenCall: (id: st
                       title={ru(RESPONSE_RU, o.response_status, "статус неизвестен")}
                     >
                       {ru(OBJECTION_RU, o.type)}
-                      {o.response_status && o.response_status !== "handled_success" ? " ⚠" : ""}
+                      {o.response_status && o.response_status !== "handled_success" ? (
+                        <BrutalistGlyph name="status-alert" size={12} />
+                      ) : null}
                     </span>
                   ))}
-                  <small style={{ color: "#06c", marginLeft: "auto" }}>открыть звонок →</small>
+                  <small style={{ color: "var(--ink-secondary)", marginLeft: "auto" }}>открыть звонок</small>
                 </div>
               ) : (
                 <div

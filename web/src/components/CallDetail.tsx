@@ -3,6 +3,7 @@ import { fmtDur, StateBadge } from "../App";
 import { api, type CallDetailRow } from "../api";
 import { OBJECTION_RU, RESPONSE_RU, ru } from "../ru";
 import AudioTimeline, { type ArtifactMarker } from "./AudioTimeline";
+import { BrutalistGlyph } from "./ui/BrutalistGlyph";
 import SpeechMetricsBar from "./SpeechMetricsBar";
 import ContactRisk from "./ContactRisk";
 import SimilarCalls from "./SimilarCalls";
@@ -102,7 +103,7 @@ export default function CallDetail({
 
   return (
     <div style={{ fontFamily: "system-ui, sans-serif", maxWidth: 1100, margin: "0 auto", padding: 24 }}>
-      <button onClick={onBack}>← К списку</button>
+      <button onClick={onBack}>К списку</button>
       <h2>
         Звонок {detail.phone_from ?? detail.phone_to}{" "}
         <small style={{ color: "#888", fontSize: 14 }}>
@@ -190,7 +191,7 @@ export default function CallDetail({
       <section>
         <h3>
           Транскрипт ({detail.segments.length} реплик) — клик по реплике: слушать с этого места;
-          «⟲» — исправить роль, если диаризация ошиблась (правка сохраняется)
+          «СМЕНИТЬ РОЛЬ» — исправить роль, если диаризация ошиблась (правка сохраняется)
         </h3>
         {detail.segments.map((s) => (
           <div
@@ -205,26 +206,37 @@ export default function CallDetail({
               background: s.idx === activeSeg ? "#fff3cd" : "transparent",
             }}
           >
-            <small style={{ color: "#888" }}>
-              {fmtMs(s.start_ms)}{" "}
-              {(roleOverrides[s.idx] ?? s.speaker) === "agent"
-                ? "🧑‍💼 менеджер"
-                : (roleOverrides[s.idx] ?? s.speaker) === "client"
-                  ? "👤 клиент"
-                  : "🎙 разговор"}
+            {/* Колонка 1: таймкод, колонка 2: глиф роли + индекс, колонка 3: текст */}
+            <small style={{ color: "var(--ink-muted)", fontVariantNumeric: "tabular-nums" }}>
+              {fmtMs(s.start_ms)}
+            </small>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "var(--ink-secondary)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+              {(roleOverrides[s.idx] ?? s.speaker) === "agent" ? (
+                <>
+                  <BrutalistGlyph name="role-manager" size={14} /> ОПЕРАТОР
+                </>
+              ) : (roleOverrides[s.idx] ?? s.speaker) === "client" ? (
+                <>
+                  <BrutalistGlyph name="role-client" size={14} /> КЛИЕНТ
+                </>
+              ) : (
+                <>
+                  <BrutalistGlyph name="channel-call" size={14} /> РАЗГОВОР
+                </>
+              )}
               <a
                 href="#role"
                 onClick={(e) => {
                   e.stopPropagation();
                   void flipRole(s.idx);
                 }}
-                title="Исправить роль реплики (агент ⇄ клиент)"
-                style={{ color: "#06c", marginLeft: 8, textDecoration: "none" }}
+                title="Исправить роль реплики (оператор и клиент меняются местами)"
+                style={{ color: "var(--ink-muted)", textDecoration: "none", fontSize: 9, border: "1px solid var(--line-struct)", padding: "1px 4px" }}
               >
-                ⟲
+                СМЕНИТЬ
               </a>
-            </small>
-            <div style={{ maxWidth: 720 }}>{s.text}</div>
+            </span>
+            <div>{s.text}</div>
           </div>
         ))}
       </section>

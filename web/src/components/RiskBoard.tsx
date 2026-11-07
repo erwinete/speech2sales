@@ -95,7 +95,7 @@ export default function RiskBoard({
       {rows.length > 0 && (
         <div style={{ marginBottom: 8 }}>
           <button onClick={() => navigate("/ai-lab?mode=problematic_calls&risk_band=high&days=30")}>
-            ✨ Разобрать риски в ИИ (LLM / MCP)
+            Разобрать риски в ИИ (LLM / MCP)
           </button>
         </div>
       )}
@@ -112,7 +112,7 @@ export default function RiskBoard({
               <strong style={{ color, minWidth: 56 }}>{r.score}</strong>
               <span style={{ fontSize: 13, color: "#666", minWidth: 66 }}>{BAND_RU[r.band] ?? r.band} риск</span>
               <span style={{ flexGrow: 1, color: "#444" }}>{r.top_factor}</span>
-              <small style={{ color: "#888" }}>звонков: {r.calls_total ?? "—"} {isOpen ? "▲" : "▼"}</small>
+              <small style={{ color: "var(--ink-muted)" }}>звонков: {r.calls_total ?? "—"} {isOpen ? "свернуть" : "развернуть"}</small>
             </div>
             {isOpen && (
               <div style={{ padding: "4px 12px 10px 68px", background: "#fafbfd" }}>
@@ -134,7 +134,7 @@ export default function RiskBoard({
                       }}
                       style={{ color: "#06c", fontSize: 14 }}
                     >
-                      Открыть карточку клиента →
+                      Открыть карточку клиента
                     </a>
                   </div>
                   {loading === r.contact_id && <small>звонки загружаются…</small>}
@@ -149,7 +149,7 @@ export default function RiskBoard({
                       </small>
                       <StateBadge state={c.state} />
                       <small>{fmtDur(c.duration_sec)}</small>
-                      <small style={{ color: "#06c" }}>открыть звонок →</small>
+                      <small style={{ color: "var(--ink-secondary)" }}>открыть звонок</small>
                     </div>
                   ))}
                   {list !== undefined && list.length === 0 && (

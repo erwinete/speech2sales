@@ -2,7 +2,7 @@
 import React from "react";
 import { navigate } from "../App";
 import { api, type ManagerPerformanceRow } from "../api";
-import { Badge, EmptyState, Skeleton } from "../components/ui";
+import { Badge, EmptyState, Icon, Skeleton } from "../components/ui";
 import { scoreTone } from "../components/ui";
 
 export default function ManagersAnalyticsPage() {
@@ -68,11 +68,13 @@ export default function ManagersAnalyticsPage() {
               <td className="num">{i.talk_ratio_agent != null ? `${Math.round(i.talk_ratio_agent * 100)}%` : "—"}</td>
               <td className="num">{i.questions_avg}</td>
               <td className="num">{i.violations_count}</td>
-              <td>{i.sentiment_avg != null ? (i.sentiment_avg > 0.2 ? "😊" : i.sentiment_avg < -0.2 ? "☹" : "😐") : "—"}</td>
+              <td><span style={{ display: "inline-flex", alignItems: "center" }}>{i.sentiment_avg != null ? (
+  i.sentiment_avg > 0.2 ? <Icon name="sentiment-pos" size={14} /> : i.sentiment_avg < -0.2 ? <Icon name="sentiment-neg" size={14} /> : <Icon name="sentiment-neu" size={14} />
+) : "—"}</span></td>
               <td>
                 {/* DEF-07 (ТЗ v4.0): сотрудник — на коучинг-разбор в ИИ-Анализатор */}
                 <button onClick={() => navigate(`/ai-lab?mode=rubert_scores&agent_name=${encodeURIComponent(i.display_name)}&days=30`)}>
-                  ✨ Разобрать в ИИ
+                  Разобрать в ИИ
                 </button>
               </td>
             </tr>

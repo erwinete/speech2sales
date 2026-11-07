@@ -3,7 +3,8 @@
 import React from "react";
 import { AuthProvider, ToastProvider, useAuth, useToast } from "./context/app";
 import { api } from "./api";
-import { Icon } from "./components/ui";
+import { SlabButton } from "./components/ui";
+import { BrutalistGlyph, type GlyphName } from "./components/ui/BrutalistGlyph";
 import DashboardPage from "./pages/DashboardPage";
 import CallDetailPage from "./pages/CallDetailPage";
 import Customer360Page from "./pages/Customer360Page";
@@ -27,38 +28,56 @@ export function navigate(path: string) {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
+const NAV_ITEMS: { path: string; index: string; glyph: GlyphName; label: string; roles?: string[] }[] = [
+  { path: "dashboard", index: "01", glyph: "nav-dashboard", label: "Сводка и звонки" },
+  { path: "contacts", index: "02", glyph: "nav-customer", label: "Клиент 360" },
+  { path: "managers", index: "03", glyph: "nav-reps", label: "Команда и коучинг" },
+  { path: "ai-lab", index: "04", glyph: "nav-llm", label: "ИИ-Анализ / MCP",
+    roles: ["admin", "supervisor", "analyst"] },
+  { path: "connectors", index: "05", glyph: "nav-settings", label: "Коннекторы",
+    roles: ["admin", "supervisor", "analyst"] },
+  { path: "users", index: "06", glyph: "nav-reps", label: "Пользователи",
+    roles: ["admin", "supervisor", "analyst"] },
+  { path: "settings", index: "07", glyph: "nav-settings", label: "Система и 152-ФЗ",
+    roles: ["admin", "supervisor", "analyst"] },
+];
+
+/** Переключатель приглушённой темы stone и ash (ТЗ v6.0 §1.2). */
+function useTheme(): [string, () => void] {
+  const [theme, setTheme] = React.useState<"stone" | "ash">(
+    () => (localStorage.getItem("polylog_theme") as "stone" | "ash") || "stone",
+  );
+  React.useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("polylog_theme", theme);
+  }, [theme]);
+  return [theme, () => setTheme((t) => (t === "stone" ? "ash" : "stone"))];
+}
+
 function Sidebar({ route, callsCount }: { route: Route; callsCount: number | null }) {
   const { user } = useAuth();
-  const item = (r: string, icon: string, label: string, count?: number | null) => (
-    <a
-      className={`nav-item ${route.path === r || (r === "dashboard" && route.path === "dashboard") ? "active" : ""}`}
-      href={`/${r}`}
-      onClick={(e) => { e.preventDefault(); navigate(r); }}
-    >
-      <Icon name={icon} /> {label}
-      {count != null && <span className="count">{count}</span>}
-    </a>
-  );
+  const allowed = (roles?: string[]) =>
+    !roles || user?.role === "admin" || user?.role === "supervisor" || user?.role === "analyst" || user?.is_service;
   return (
     <aside className="sidebar">
-      <div className="logo">Полилог <span className="badge brand">API</span></div>
       <div className="group-label">Аналитика</div>
-      {item("dashboard", "dashboard", "Дашборд и звонки", callsCount)}
-      {item("contacts", "contacts", "Клиенты 360°")}
-      {item("managers", "coach", "Команда и коучинг")}
-      {user?.role === "admin" || user?.role === "supervisor" || user?.role === "analyst" || user?.is_service ? (
-        item("ai-lab", "sparkles", "ИИ-Анализатор")
-      ) : null}
-      {user?.role === "admin" || user?.role === "supervisor" || user?.role === "analyst" || user?.is_service ? (
-        <>
-          <div className="group-label">Интеграции и управление</div>
-          {item("connectors", "plug", "Коннекторы")}
-          {item("users", "users", "Пользователи")}
-          {item("settings", "settings", "Настройки")}
-        </>
-      ) : null}
-      <div style={{ marginTop: "auto", padding: "10px", borderTop: "1px solid var(--border-subtle)" }}>
-        <div style={{ fontWeight: 600, fontSize: 13 }}>{user?.display_name ?? "…"}</div>
+      {NAV_ITEMS.map((item) =>
+        !allowed(item.roles) ? null : (
+          <a
+            key={item.path}
+            className={`nav-item ${route.path === item.path ? "active" : ""}`}
+            href={`/${item.path}`}
+            onClick={(e) => { e.preventDefault(); navigate(item.path); }}
+          >
+            <span className="nav-index">{item.index}</span>
+            <BrutalistGlyph name={item.glyph} size={16} />
+            {item.label}
+            {item.path === "dashboard" && callsCount != null && <span className="count">{callsCount}</span>}
+          </a>
+        ),
+      )}
+      <div className="nav-footer">
+        <div style={{ fontWeight: 600, fontSize: 12 }}>{user?.display_name ?? "…"}</div>
         <div className="muted" style={{ fontSize: 11 }}>{user?.email}</div>
         {user && <span className={`badge ${user.role === "admin" ? "violet" : "brand"}`}>{user.role}</span>}
       </div>
@@ -133,6 +152,7 @@ function App() {
   const [route, setRoute] = React.useState<Route>(parseLocation);
   const [callsCount, setCallsCount] = React.useState<number | null>(null);
   const [uploadOpen, setUploadOpen] = React.useState(false);
+  const [theme, toggleTheme] = useTheme();
   React.useEffect(() => {
     const sync = () => setRoute(parseLocation());
     window.addEventListener("popstate", sync);
@@ -146,24 +166,41 @@ function App() {
 
   const page = route.path.split("/")[0];
   const param = route.path.split("/")[1];
+  const title = NAV_ITEMS.find((i) => i.path === page)?.label
+    ?? (page === "calls" ? "Разбор звонка" : "Полилог");
 
   return (
     <div className="app-shell">
+      {/* System Header Bar (ТЗ v6.0 §4.1): бренд, телеметрия, действия */}
+      <header className="sys-header">
+        <div className="sys-header__brand">
+          Полилог <span className="muted">// речевая аналитика</span>
+        </div>
+        <div className="sys-header__telemetry">
+          <div className="sys-header__cell">
+            <BrutalistGlyph name="nav-calls" size={14} /> Звонков в базе: <b>{callsCount ?? "…"}</b>
+          </div>
+          <div className="sys-header__cell">
+            <BrutalistGlyph name="nav-llm" size={14} /> Конвейер ASR / RuBERT: <b>локальный</b>
+          </div>
+          <div className="sys-header__cell">
+            <BrutalistGlyph name="status-pii" size={14} /> Маскирование ПДн: <b>активно</b>
+          </div>
+        </div>
+        <div className="sys-header__actions">
+          <SlabButton glyph="ctrl-upload" indexTag="WAV/MP3" onClick={() => setUploadOpen(true)}>
+            Загрузить запись
+          </SlabButton>
+          <SlabButton glyph="ctrl-theme" indexTag={theme.toUpperCase()} onClick={toggleTheme} />
+        </div>
+      </header>
+
+      <div className="sys-body">
       <Sidebar route={route} callsCount={callsCount} />
       <div className="main">
         <div className="topbar">
-          <h2 style={{ margin: 0 }}>
-            {page === "dashboard" && "Дашборд и звонки"}
-            {page === "contacts" && "Клиенты 360°"}
-            {page === "managers" && "Команда и коучинг"}
-            {page === "ai-lab" && "ИИ-Анализатор (LLM & MCP)"}
-            {page === "connectors" && "Коннекторы АТС и CRM"}
-            {page === "users" && "Пользователи и роли"}
-            {page === "settings" && "Настройки"}
-            {page === "calls" && "Разбор звонка"}
-          </h2>
+          <h2 style={{ margin: 0 }}>{title}</h2>
           <div className="spacer" />
-          <button className="primary" onClick={() => setUploadOpen(true)}>+ Загрузить звонок</button>
         </div>
 
         {page === "dashboard" && (
@@ -185,6 +222,7 @@ function App() {
         {page === "connectors" && <ConnectorsPage />}
         {page === "users" && <UsersPage />}
         {page === "settings" && <SettingsPage />}
+      </div>
       </div>
       {uploadOpen && (
         <UploadCallModal

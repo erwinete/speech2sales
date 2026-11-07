@@ -8,10 +8,10 @@ import jsonschema
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from polylog.pii.spoken_numbers import denormalize_spoken_numbers
-from polylog.pii.detect import detect_pii
-from polylog.pipeline import compute_metrics
 from polylog.export.scenario import build_trainer_scenario
+from polylog.pii.detect import detect_pii
+from polylog.pii.spoken_numbers import denormalize_spoken_numbers
+from polylog.pipeline import compute_metrics
 
 # 1. Проверка V5-01: денормализация проговоренных голосом паспортов и телефонов РФ, РБ и Узбекистана
 spoken = (
@@ -48,7 +48,7 @@ dummy_scenario = build_trainer_scenario(
 jsonschema.validate(instance=dummy_scenario, schema=schema)
 
 # 4. Дополнительно: стадии диалога и текстовые упоминания (V5-02)
-from polylog.nlp.stages import detect_dialog_stages, extract_text_mentions, DIALOG_STAGES  # noqa: E402
+from polylog.nlp.stages import DIALOG_STAGES, detect_dialog_stages, extract_text_mentions  # noqa: E402
 
 stages = detect_dialog_stages(utts)
 assert stages and all(s["stage"] in DIALOG_STAGES or s["stage"] == "unclassified" for s in stages)

@@ -46,7 +46,7 @@ export default function ObjectionClusters({ onOpenCall }: { onOpenCall: (id: str
       {/* V5-03 (ТЗ v5.0): сценарий тренажёра из кластера возражений */}
       <div style={{ marginBottom: 8 }}>
         <button onClick={() => navigate("/ai-lab?tab=scenario")}>
-          🎓 Создать сценарий тренажёра из кластера
+          Создать сценарий тренажёра из кластера
         </button>
       </div>
       {clusters.slice(0, 6).map((c, i) => {
@@ -65,7 +65,7 @@ export default function ObjectionClusters({ onOpenCall }: { onOpenCall: (id: str
                   <small style={{ color: "#888" }}> — «{c.quotes[0].slice(0, 80)}»</small>
                 )}
               </span>
-              <small>{isOpen ? "▲" : "▼"}</small>
+              <small>{isOpen ? "свернуть" : "развернуть"}</small>
             </div>
             {isOpen && (
               <div style={{ padding: "4px 12px 10px 40px", background: "#fafbfd" }}>
@@ -79,7 +79,7 @@ export default function ObjectionClusters({ onOpenCall }: { onOpenCall: (id: str
                     {cc.started_at
                       ? ` · ${new Date(cc.started_at).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" })}`
                       : ""}{" "}
-                    — открыть звонок →
+                    — открыть звонок
                   </div>
                 ))}
               </div>

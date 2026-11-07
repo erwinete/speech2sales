@@ -206,7 +206,7 @@ export default function InsightsFeed({
                       {new Date(c.started_at).toLocaleDateString("ru-RU")}
                     </small>
                     <StateBadge state={c.state} />
-                    <small style={{ color: "#06c" }}>открыть звонок →</small>
+                    <small style={{ color: "var(--ink-secondary)" }}>открыть звонок</small>
                   </div>
                 ))}
                 {(calls[cid] ?? []).length === 0 && (

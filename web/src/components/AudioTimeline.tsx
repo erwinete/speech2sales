@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { SlabButton } from "./ui/SlabButton";
+import { BrutalistGlyph } from "./ui/BrutalistGlyph";
 
 // Визуальный плеер (doc 08): waveform-полоса + метки артефактов скоринга
 // (возражения — красные, сигналы — зелёные, цитаты скоринга — синие).
@@ -11,10 +13,11 @@ export interface ArtifactMarker {
   label: string;
 }
 
+// Приглушённые семантические тона дорожек (ТЗ v6.0): только переменные темы
 const MARKER_COLOR: Record<string, string> = {
-  objection: "#d64545",
-  signal: "#2e9e5b",
-  score: "#3a6fd8",
+  objection: "var(--tone-critical)",
+  signal: "var(--tone-positive)",
+  score: "var(--tone-neutral)",
 };
 
 export default function AudioTimeline({
@@ -127,28 +130,22 @@ export default function AudioTimeline({
 
   return (
     <div style={{ margin: "12px 0", maxWidth: 760 }}>
+      {/* Техническая шкала с миллиметровыми засечками каждые 5 и 30 секунд (ТЗ v6.0 §4.3) */}
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-        <button
-          onClick={toggle}
-          style={{
-            width: 44, height: 44, borderRadius: "50%", border: "none", cursor: "pointer",
-            background: "#2f6fed", color: "#fff", fontSize: 16,
-          }}
-        >
-          {playing ? "❚❚" : "▶"}
-        </button>
+        <SlabButton glyph={playing ? "ctrl-pause" : "ctrl-play"} onClick={toggle} size="md" />
+        <div style={{ display: "flex", flexDirection: "column", gap: 1, flex: 1, minWidth: 0 }}>
         <div
           ref={wrapRef}
           onClick={click}
-          style={{ position: "relative", flexGrow: 1, height: 56, cursor: "pointer" }}
+          style={{ position: "relative", height: 56, cursor: "pointer" }}
         >
           <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
-          {/* прогресс */}
+          {/* прогресс: прошедший сегмент, курсор — вертикальная линия */}
           <div style={{
             position: "absolute", top: 0, bottom: 0, left: 0, width: `${progress * 100}%`,
-            background: "#2f6fed14", borderRight: "2px solid #2f6fed", pointerEvents: "none",
+            background: "var(--bg-selected)", borderRight: "2px solid var(--ink-primary)", pointerEvents: "none",
           }} />
-          {/* метки артефактов */}
+          {/* прямоугольные маркеры рисков/возражений на дорожке */}
           {markers.map((m, i) => {
             const frac = durationMs ? m.startMs / durationMs : 0;
             return (
@@ -157,24 +154,45 @@ export default function AudioTimeline({
                 title={m.label}
                 onClick={(e) => { e.stopPropagation(); seekTo(frac); }}
                 style={{
-                  position: "absolute", top: -6, left: `${frac * 100}%`,
-                  width: 10, height: 10, borderRadius: "50%",
-                  background: MARKER_COLOR[m.kind] ?? "#888",
-                  border: "1px solid #fff", boxShadow: "0 0 2px #0004",
+                  position: "absolute", top: -4, left: `${frac * 100}%`,
+                  width: 8, height: 8,
+                  background: MARKER_COLOR[m.kind] ?? "var(--ink-muted)",
+                  border: "1px solid var(--line-strong)",
                   cursor: "pointer",
                 }}
               />
             );
           })}
         </div>
-        <span style={{ fontSize: 12, color: "#666", minWidth: 76, textAlign: "right" }}>
+        {/* засечки времени: каждые 5 секунд малые, каждые 30 секунд высокие */}
+        <div style={{ position: "relative", height: 8, pointerEvents: "none" }}>
+          {Array.from({ length: Math.floor((durationMs / 1000) / 5) + 1 }).map((_, i) => {
+            const sec = i * 5;
+            const big = sec % 30 === 0;
+            return (
+              <span
+                key={i}
+                style={{
+                  position: "absolute", left: `${durationMs ? (sec * 1000) / durationMs * 100 : 0}%`,
+                  top: 0, width: 1, height: big ? 8 : 4,
+                  background: "var(--line-strong)",
+                }}
+              />
+            );
+          })}
+        </div>
+        </div>
+        <span style={{ fontSize: 12, color: "var(--ink-muted)", minWidth: 76, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
           {mmss(progress)} / {mmss(1)}
         </span>
       </div>
-      <div style={{ display: "flex", gap: 14, marginTop: 4, fontSize: 12, color: "#666" }}>
+      <div style={{ display: "flex", gap: 14, marginTop: 4, fontSize: 12, color: "var(--ink-muted)", alignItems: "center" }}>
         <Legend color={MARKER_COLOR.objection} label="возражение" />
         <Legend color={MARKER_COLOR.signal} label="сигнал" />
         <Legend color={MARKER_COLOR.score} label="цитата оценки" />
+        <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <BrutalistGlyph name="status-ok" size={12} /> клик по шкале: перемотка
+        </span>
       </div>
     </div>
   );
@@ -183,7 +201,7 @@ export default function AudioTimeline({
 function Legend({ color, label }: { color: string; label: string }) {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-      <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, display: "inline-block" }} />
+      <span style={{ width: 8, height: 8, background: color, border: "1px solid var(--line-strong)", display: "inline-block" }} />
       {label}
     </span>
   );

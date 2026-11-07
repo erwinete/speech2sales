@@ -1,0 +1,106 @@
+/* theme.css — палитры и токены (ТЗ v6.0, Quiet Minimalist Brutalism).
+   Две приглушённые неконтрастные темы: stone (тёплый бетон) и ash (матовый
+   графит). Legacy-алиасы внизу поддерживают классы, написанные под старую
+   систему, но дают им спокойные значения — яркие цвета исключены. */
+
+:root,
+[data-theme="stone"] {
+  /* Базовые поверхности (без чистого белого, мягкий низкий контраст) */
+  --bg-canvas: #dad7d0;
+  --bg-surface: #e2dfd9;
+  --bg-elevated: #eae7e1;
+  --bg-interactive: #d2cfc8;
+  --bg-interactive-hover: #c6c2b9;
+  --bg-interactive-active: #b9b5ac;
+  --bg-selected: #c8c4ba;
+
+  /* Текст — мягкий сухой графит вместо чёрного */
+  --ink-primary: #353431;
+  --ink-secondary: #5a5853;
+  --ink-muted: #78756e;
+  --ink-on-accent: #eae7e1;
+
+  /* Структурные линии и рамки */
+  --line-struct: #bdb9b0;
+  --line-strong: #8f8b82;
+  --line-subtle: #cecac1;
+
+  /* Приглушённые семантические тона */
+  --tone-neutral: #6b737a;
+  --tone-neutral-bg: #cfd3d6;
+  --tone-positive: #5e7163;
+  --tone-positive-bg: #ccd4ce;
+  --tone-caution: #8a7656;
+  --tone-caution-bg: #ddd6c8;
+  --tone-critical: #875e58;
+  --tone-critical-bg: #dbcbc8;
+
+  /* Подсветка и фокус — без стандартного синего кольца */
+  --focus-bracket: #6e6a61;
+  --selection-bg: #c2beb4;
+  --selection-ink: #2c2b28;
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+[data-theme="ash"] {
+  /* Приглушённая тёмная палитра (без чистого чёрного) */
+  --bg-canvas: #222325;
+  --bg-surface: #282a2c;
+  --bg-elevated: #2f3134;
+  --bg-interactive: #323538;
+  --bg-interactive-hover: #3b3e42;
+  --bg-interactive-active: #44484c;
+  --bg-selected: #383b3f;
+
+  --ink-primary: #b8b6b0;
+  --ink-secondary: #8e8c86;
+  --ink-muted: #6c6b66;
+  --ink-on-accent: #222325;
+
+  --line-struct: #3a3d40;
+  --line-strong: #63666a;
+  --line-subtle: #303235;
+
+  --tone-neutral: #7a8691;
+  --tone-neutral-bg: #2c3136;
+  --tone-positive: #6c8272;
+  --tone-positive-bg: #2b332e;
+  --tone-caution: #948264;
+  --tone-caution-bg: #363129;
+  --tone-critical: #946a64;
+  --tone-critical-bg: #382b29;
+
+  --focus-bracket: #7d8085;
+  --selection-bg: #45484d;
+  --selection-ink: #d0cec8;
+}
+
+/* ── Legacy-алиасы: старые имена переменных получают новые приглушённые значения ── */
+:root,
+[data-theme="stone"],
+[data-theme="ash"] {
+  --text-primary: var(--ink-primary);
+  --text-secondary: var(--ink-secondary);
+  --text-muted: var(--ink-muted);
+  --bg-subtle: var(--bg-interactive);
+  --border-subtle: var(--line-subtle);
+  --border-strong: var(--line-strong);
+  --brand-primary: var(--ink-secondary);
+  --brand-primary-subtle: var(--bg-selected);
+  --status-success: var(--tone-positive);
+  --status-success-bg: var(--tone-positive-bg);
+  --status-warning: var(--tone-caution);
+  --status-warning-bg: var(--tone-caution-bg);
+  --status-danger: var(--tone-critical);
+  --status-danger-bg: var(--tone-critical-bg);
+  --accent-violet: var(--tone-neutral);
+  --accent-violet-bg: var(--bg-selected);
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --shadow-card: none;
+  --font-ui: var(--font-sans);
+}

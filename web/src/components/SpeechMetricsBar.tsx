@@ -1,8 +1,7 @@
 /** Полоса речевых метрик звонка (V5-07, ТЗ v5.0 §9.1): баланс речи, темп
     (слов/мин), перебивания, самый длинный монолог, траектория тона клиента
-    (начало → середина → финал), лента стадий диалога и извлечённые сущности
-    (суммы, даты, контакты). */
-import { Icon } from "./ui";
+    (начало, середина, финал), лента стадий диалога и извлечённые сущности. */
+import { BrutalistGlyph, type GlyphName } from "./ui/BrutalistGlyph";
 
 interface MetricsProps {
   metrics: Record<string, unknown> | null;
@@ -20,10 +19,11 @@ const STAGE_RU: Record<string, string> = {
   goodbye: "Прощание",
 };
 
-const TRAJ_ICON: Record<string, string> = {
-  positive: "😊",
-  neutral: "😐",
-  negative: "☹",
+// Тональность — собственные изображения-глифы, без смайликов (ТЗ v6.0)
+const TRAJ_GLYPH: Record<string, GlyphName> = {
+  positive: "sentiment-pos",
+  neutral: "sentiment-neu",
+  negative: "sentiment-neg",
 };
 
 const MENTION_RU: Record<string, string> = {
@@ -93,16 +93,20 @@ export default function SpeechMetricsBar({ metrics, mentions = [] }: MetricsProp
         <div className="metric-card">
           <div className="v" style={{ fontSize: 15 }}>
             {trajectory.length
-              ? trajectory.map((t, i) => <span key={i} title={t}>{TRAJ_ICON[t] ?? "😐"}</span>)
+              ? trajectory.map((t, i) => (
+                  <span key={i} title={t} style={{ display: "inline-flex", marginRight: 2 }}>
+                    <BrutalistGlyph name={TRAJ_GLYPH[t] ?? "sentiment-neu"} size={14} />
+                  </span>
+                ))
               : "—"}
           </div>
-          <small className="muted">тон клиента: начало → финал</small>
+          <small className="muted">тон клиента: начало к финалу</small>
         </div>
       </div>
 
       {stages.length > 0 && (
         <div style={{ marginTop: 10 }}>
-          <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Стадии диалога</div>
+          <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 4 }}>Стадии диалога</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {stages.map((s, i) => (
               <span key={i} className="badge brand" title={`${s.start_ms}–${s.end_ms} мс`}>
@@ -115,8 +119,8 @@ export default function SpeechMetricsBar({ metrics, mentions = [] }: MetricsProp
 
       {mentions.length > 0 && (
         <div style={{ marginTop: 10 }}>
-          <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>
-            <Icon name="search" size={12} /> Извлечённые сущности
+          <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 4 }}>
+            Извлечённые сущности
           </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {mentions.map((m, i) => (

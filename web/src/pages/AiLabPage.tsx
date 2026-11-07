@@ -5,7 +5,7 @@
     и нативное MCP-подключение (Claude Code, Codex, ZCode, Cursor). */
 import React from "react";
 import { api, AiContextRequest, AiPreset, PreviewContextResponse, PiiSanitizerConfig } from "../api";
-import { Badge, EmptyState, Icon } from "../components/ui";
+import { Badge, EmptyState, Icon, RailToggle, SegmentedMatrix, StepSelect } from "../components/ui";
 import { useToast } from "../context/app";
 
 const MODES = [
@@ -190,7 +190,7 @@ export default function AiLabPage({ onOpenCall }: { onOpenCall: (id: string) => 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // DEF-07: параметры быстрого перехода («✨ Разобрать в ИИ») из других экранов
+  // DEF-07: параметры быстрого перехода (кнопка «Разобрать в ИИ») из других экранов
   React.useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const modeQ = q.get("mode");
@@ -387,32 +387,36 @@ export default function AiLabPage({ onOpenCall }: { onOpenCall: (id: string) => 
   const cfg = mcpCfg?.harnesses[harness];
 
   const chip = (key: keyof PiiSanitizerConfig, label: string, hint: string) => (
-    <label key={key} className="pii-chip" style={{ opacity: pii.enabled ? 1 : 0.5 }}>
-      <input
-        type="checkbox"
-        disabled={!pii.enabled}
-        checked={Boolean(pii[key])}
-        onChange={(e) => setPii({ ...pii, [key]: e.target.checked })}
-      />
-      <span>{label}<br /><small>{hint}</small></span>
-    </label>
+    <RailToggle
+      key={key}
+      checked={Boolean(pii[key])}
+      onChange={(next) => setPii({ ...pii, [key]: next })}
+      label={label}
+      description={hint}
+      disabled={!pii.enabled}
+      size="sm"
+    />
   );
 
   const stats = preview?.pii_stats;
 
   return (
     <div>
-      {/* ── Блок 1: выборка данных ── */}
-      <div className="ai-mode-grid">
-        {MODES.map((m) => (
-          <button key={m.id} className={`card ai-mode ${mode === m.id ? "active" : ""}`} onClick={() => setMode(m.id)}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <Icon name={m.icon} size={18} />
-              <h3 style={{ margin: 0 }}>{m.title}</h3>
-            </div>
-            <small className="muted" style={{ display: "block", marginTop: 6 }}>{m.hint}</small>
-          </button>
-        ))}
+      {/* ── Блок 1: выборка данных (SegmentedMatrix, ТЗ v6.0 §4.5) ── */}
+      <div style={{ margin: "12px 0" }}>
+        <SegmentedMatrix
+          ariaLabel="Режим выборки данных"
+          value={mode}
+          onChange={(v) => setMode(v as typeof mode)}
+          options={[
+            { value: "rubert_scores", label: "Скоринг и чек-листы" },
+            { value: "problematic_calls", label: "Проблемные и риски" },
+            { value: "transcripts_range", label: "Транскрипты за период" },
+          ]}
+        />
+        <small className="muted" style={{ display: "block", marginTop: 6 }}>
+          {MODES.find((m) => m.id === mode)?.hint}
+        </small>
       </div>
 
       <div className="card">
@@ -461,24 +465,23 @@ export default function AiLabPage({ onOpenCall }: { onOpenCall: (id: string) => 
           <Icon name="shield" size={20} />
           <div style={{ flex: 1 }}>
             <h3 style={{ margin: 0 }}>Удалять персональные данные и ID перед передачей в ИИ</h3>
-            <small className="muted">152-ФЗ Safe Mode: ФИО → [ФИО_1], телефоны → [ТЕЛЕФОН_1], заказы → [ЗАКАЗ_ДОГОВОР_1], UUID → [CALL_#1]</small>
+            <small className="muted">152-ФЗ Safe Mode: ФИО заменяются на [ФИО_1], телефоны на [ТЕЛЕФОН_1], заказы на [ЗАКАЗ_ДОГОВОР_1], UUID на [CALL_#1]</small>
           </div>
-          <button
-            className={pii.enabled ? "primary" : ""}
-            onClick={() => setPii({ ...pii, enabled: !pii.enabled })}
-            aria-pressed={pii.enabled}
-          >
-            {pii.enabled ? "Защита активна ✓" : "Выключена"}
-          </button>
+          <RailToggle
+            checked={pii.enabled}
+            onChange={(next) => setPii({ ...pii, enabled: next })}
+            label={pii.enabled ? "Защита 152-ФЗ активна" : "Фильтрация выключена"}
+            glyph="status-pii"
+          />
         </div>
         {pii.enabled && (
           <>
             <div className="pii-chips">
-              {chip("strip_names", "ФИО и имена", "Иванов И.И. → [ФИО_1]")}
-              {chip("strip_phones_emails", "Телефоны и Email", "+7 900 … → [ТЕЛЕФОН_1]")}
-              {chip("strip_orders_contracts", "Заказы, договоры, карты, паспорта", "заказ № 4512 → [ЗАКАЗ_ДОГОВОР_1]")}
-              {chip("strip_internal_ids", "Внутренние и CRM ID", "UUID → [CALL_#1], [CONTACT_#1]")}
-              {chip("strip_company_names", "Компании и адреса", "ООО Ромашка → [КОМПАНИЯ_1]")}
+              {chip("strip_names", "ФИО и имена", "Иванов И.И. заменяется на [ФИО_1]")}
+              {chip("strip_phones_emails", "Телефоны и Email", "+7 900 … заменяется на [ТЕЛЕФОН_1]")}
+              {chip("strip_orders_contracts", "Заказы, договоры, карты, паспорта", "заказ № 4512 заменяется на [ЗАКАЗ_ДОГОВОР_1]")}
+              {chip("strip_internal_ids", "Внутренние и CRM ID", "UUID заменяется на [CALL_#1], [CONTACT_#1]")}
+              {chip("strip_company_names", "Компании и адреса", "ООО Ромашка заменяется на [КОМПАНИЯ_1]")}
             </div>
             <div className="form-row" style={{ marginBottom: 0 }}>
               <label>Дополнительные стоп-слова через запятую (бренды, фамилии руководителей)</label>
@@ -537,13 +540,16 @@ export default function AiLabPage({ onOpenCall }: { onOpenCall: (id: string) => 
             <h3>Подключение модели</h3>
             <div className="form-row">
               <label>Провайдер</label>
-              <select value={provider} onChange={(e) => {
-                setProvider(e.target.value);
-                const p = PROVIDERS.find((x) => x.id === e.target.value);
-                if (p?.url) setBaseUrl(p.url);
-              }}>
-                {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-              </select>
+              <StepSelect
+                ariaLabel="Провайдер LLM"
+                value={provider}
+                onChange={(v) => {
+                  setProvider(v);
+                  const p = PROVIDERS.find((x) => x.id === v);
+                  if (p?.url) setBaseUrl(p.url);
+                }}
+                options={PROVIDERS.map((p) => ({ value: p.id, label: p.label }))}
+              />
             </div>
             {provider === "custom" && (
               <div className="form-row">

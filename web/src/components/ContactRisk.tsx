@@ -102,7 +102,7 @@ export default function ContactRisk({
             }}
             style={{ color: "#06c", fontSize: 14 }}
           >
-            Открыть карточку клиента →
+            Открыть карточку клиента
           </a>
         </div>
       )}

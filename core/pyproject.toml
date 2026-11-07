@@ -74,3 +74,4 @@ check_untyped_defs = true
 # эталонные DoD-скрипты ТЗ: длинные assert-строки и импорт после проверок
 "scripts/verify_v3_dod.py" = ["E501", "E402"]
 "scripts/verify_v4_dod.py" = ["E501", "E402"]
+"scripts/verify_v5_dod.py" = ["E501", "E402"]

@@ -85,7 +85,7 @@ export default function CallDetailPage({
   if (error) {
     return (
       <div>
-        <button onClick={onBack}>← К списку</button>
+        <button onClick={onBack}>К списку</button>
         <p style={{ color: "crimson" }}>Не удалось загрузить звонок: {error}</p>
         <button onClick={load}>Повторить</button>
       </div>
@@ -98,7 +98,7 @@ export default function CallDetailPage({
   const isStereo = (detail.channels_map ?? null) !== null;
   return (
     <div>
-      <button onClick={onBack}>← К списку</button>
+      <button onClick={onBack}>К списку</button>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", margin: "8px 0" }}>
         <h2 style={{ margin: 0 }}>
           Звонок <span className="mono">{detail.phone_from ?? detail.phone_to}</span>
@@ -116,11 +116,11 @@ export default function CallDetailPage({
         {/* DEF-07 (ТЗ v4.0): быстрый переход звонка в ИИ-Анализатор */}
         {onOpenAiLab && (
           <button onClick={() => onOpenAiLab(`?mode=transcripts_range&call_ids=${callId}&days=90`)}>
-            ✨ Разобрать в ИИ (LLM / MCP)
+            Разобрать в ИИ (LLM / MCP)
           </button>
         )}
-        <button onClick={() => void makeScenario()}>🎓 Создать сценарий тренажёра</button>
-        <button onClick={() => void sendToCrm()}>↑ Отправить в CRM</button>
+        <button onClick={() => void makeScenario()}>Создать сценарий тренажёра</button>
+        <button onClick={() => void sendToCrm()}>Отправить в CRM</button>
         <button onClick={() => void exportArtifact()}>Экспорт JSON</button>
       </div>
 
