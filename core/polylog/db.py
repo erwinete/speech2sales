@@ -89,6 +89,13 @@ async def _auto_migrate(engine: AsyncEngine) -> int:
     return added
 
 
+async def _ensure_v4_columns(engine: AsyncEngine) -> int:
+    """ТЗ v4.0 DEF-06: идемпотентное добавление новых колонок v2.0/v4.0
+    (users/connectors/rubrics/llm_analysis_runs) в ранее созданные таблицы —
+    обёртка над _auto_migrate; спасает от 'no such column' на старых .db."""
+    return await _auto_migrate(engine)
+
+
 async def init_db(engine: AsyncEngine) -> None:
     """Dev/тесты: create_all + авто-миграция колонок. Прод-миграции — alembic
     (doc 01 §7.4). Postgres: дополнительно pgvector-расширение и таблица
@@ -97,7 +104,7 @@ async def init_db(engine: AsyncEngine) -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    await _auto_migrate(engine)
+    await _ensure_v4_columns(engine)
 
     if engine.url.get_backend_name().startswith("postgresql"):
         async with engine.begin() as conn:

@@ -112,7 +112,8 @@ class FreePBXConnector:
         dst = (r.get("dst") or "").strip() or None
         # внутренние номера агентов — короткие; телефон клиента — длинный
         def is_phone(v: str | None) -> bool:
-            return bool(v and _PHONE_RE.match(v) and len(v.lstrip("+")) >= 10)
+            # 9-12 цифр: клиентские номера РБ (+375) и РУз (+998) тоже валидны (DEF-01)
+            return bool(v and _PHONE_RE.match(v) and len(v.lstrip("+")) >= 9)
 
         if direction == "inbound":
             phone_from, phone_to = src if is_phone(src) else None, dst

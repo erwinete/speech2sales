@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { fmtDur, StateBadge } from "../App";
+import { fmtDur, navigate, StateBadge } from "../App";
 import { api, type CallRow } from "../api";
 
 // «Куда позвонить в первую очередь» (doc 08 §4.1): контакты по убыванию риска.
@@ -91,6 +91,14 @@ export default function RiskBoard({
         давности общения, доли пропущенных, неотработанных возражений и качества звонков.
         Клик по строке — раскрыть последние звонки контакта, клик по звонку — открыть его.
       </small>
+      {/* DEF-07 (ТЗ v4.0): риск-борд целиком — в ИИ-Анализатор */}
+      {rows.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <button onClick={() => navigate("/ai-lab?mode=problematic_calls&risk_band=high&days=30")}>
+            ✨ Разобрать риски в ИИ (LLM / MCP)
+          </button>
+        </div>
+      )}
       {rows.map((r) => {
         const color = BAND_COLOR[r.band] ?? "#888";
         const isOpen = expanded === r.contact_id;

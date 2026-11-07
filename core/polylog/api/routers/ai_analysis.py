@@ -102,9 +102,8 @@ async def preview_context(body: AIContextRequest, session: SessionDep, user: Req
     }
 
 
-@router.post("/ai/analyze")
-async def analyze(body: AIAnalyzeRequest, request: Request, session: SessionDep, user: RequireAnalyst) -> JSONResponse:
-    """Полный цикл: контекст → санитайзер ПДн → LLM → llm_analysis_runs + аудит."""
+async def _prepare_analyze(body: AIAnalyzeRequest, session, user: RequireAnalyst):
+    """Общая подготовка analyze/analyze-stream: контекст → санитайзер → run."""
     org = await _org(session)
     if not body.user_prompt:
         raise HTTPException(422, "user_prompt обязателен (выберите пресет или напишите задание)")
@@ -121,6 +120,8 @@ async def analyze(body: AIAnalyzeRequest, request: Request, session: SessionDep,
             direction=body.direction, min_duration_sec=body.min_duration_sec,
             objection_type=body.objection_type, call_ids=body.call_ids,
             limit_calls=body.limit_calls,
+            max_context_tokens=body.max_context_tokens,
+            smart_compress=body.smart_compress,
         )
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
@@ -149,6 +150,13 @@ async def analyze(body: AIAnalyzeRequest, request: Request, session: SessionDep,
     )
     session.add(run)
     await session.flush()
+    return org, bundle, run, api_key, alias_map
+
+
+@router.post("/ai/analyze")
+async def analyze(body: AIAnalyzeRequest, request: Request, session: SessionDep, user: RequireAnalyst) -> JSONResponse:
+    """Полный цикл: контекст → санитайзер ПДн → LLM → llm_analysis_runs + аудит."""
+    org, bundle, run, api_key, alias_map = await _prepare_analyze(body, session, user)
 
     user_content = f"{body.user_prompt}\n\n--- Данные из «Полилога» (режим {bundle.mode}) ---\n\n{bundle.markdown}"
     try:
@@ -189,6 +197,87 @@ async def analyze(body: AIAnalyzeRequest, request: Request, session: SessionDep,
         "token_usage": result.get("usage") or {},
         "calls_count": bundle.calls_count,
     })
+
+
+@router.post("/ai/analyze/stream")
+async def analyze_stream(
+    body: AIAnalyzeRequest, request: Request, session: SessionDep, user: RequireAnalyst,
+) -> StreamingResponse:
+    """SSE-стриминг ИИ-анализа (DEF-03, ТЗ v4.0 §8.1): чанки `meta` (статистика
+    ПДн и объём выборки до вызова LLM), `reasoning` (рассуждения reasoning-
+    моделей), `content` (текст отчёта), `done` (run_id, usage), `error`."""
+    org, bundle, run, api_key, alias_map = await _prepare_analyze(body, session, user)
+    await session.commit()  # фиксируем run до стрима
+
+    user_content = f"{body.user_prompt}\n\n--- Данные из «Полилога» (режим {bundle.mode}) ---\n\n{bundle.markdown}"
+
+    async def gen():
+        yield (
+            "event: meta\ndata: "
+            + json.dumps(
+                {
+                    "run_id": str(run.id),
+                    "mode": bundle.mode,
+                    "calls_count": bundle.calls_count,
+                    "estimated_tokens": bundle.estimated_tokens,
+                    "pii_stats": _stats_out(bundle.stats) if bundle.stats else {},
+                    "alias_map": alias_map,
+                },
+                ensure_ascii=False,
+            )
+            + "\n\n"
+        )
+        parts: list[str] = []
+        usage: dict = {}
+        try:
+            async for chunk in llm_client.chat_completion_stream(
+                base_url=body.base_url,
+                api_key=api_key,
+                model=body.model,
+                system_prompt=body.system_prompt or DEFAULT_SYSTEM_PROMPT,
+                user_prompt=user_content,
+                temperature=body.temperature,
+                max_tokens=body.max_tokens,
+                transport=getattr(request.app.state, "llm_transport", None),
+            ):
+                if chunk.get("type") == "usage":
+                    usage = chunk.get("usage") or {}
+                    continue
+                parts.append(chunk["delta"])
+                yield (
+                    f"event: {chunk['type']}\ndata: "
+                    + json.dumps({"delta": chunk["delta"]}, ensure_ascii=False)
+                    + "\n\n"
+                )
+        except llm_client.LLMError as e:
+            run.status = "failed"
+            run.error_message = str(e)[:500]
+            session.add(
+                AuditLog(org_id=org.id, actor_id=user.user_id, action="llm_analyze",
+                         resource_type="llm_run", resource_id=str(run.id),
+                         details={"status": "failed", "error": str(e)[:200]}))
+            await session.commit()
+            yield "event: error\ndata: " + json.dumps({"message": str(e)}, ensure_ascii=False) + "\n\n"
+            return
+        run.status = "done"
+        run.result_markdown = "".join(parts)
+        run.token_usage = usage or None
+        session.add(
+            AuditLog(org_id=org.id, actor_id=user.user_id, action="llm_analyze",
+                     resource_type="llm_run", resource_id=str(run.id),
+                     details={"model": body.model, "calls": bundle.calls_count,
+                              "stream": True, "usage": usage}))
+        await session.commit()
+        yield (
+            "event: done\ndata: "
+            + json.dumps(
+                {"run_id": str(run.id), "token_usage": usage, "calls_count": bundle.calls_count},
+                ensure_ascii=False,
+            )
+            + "\n\n"
+        )
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 def _bundle_call_ids(bundle) -> list[str]:

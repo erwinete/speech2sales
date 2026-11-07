@@ -21,7 +21,8 @@ function parseLocation(): Route {
   return { path, query: new URLSearchParams(window.location.search) };
 }
 
-function navigate(path: string) {
+/** Навигация по History API (DEF-07: доступна компонентам вне App). */
+export function navigate(path: string) {
   window.history.pushState({}, "", path.startsWith("/") ? path : `/${path}`);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
@@ -174,10 +175,10 @@ function App() {
           />
         )}
         {page === "calls" && param && (
-          <CallDetailPage callId={param} onBack={() => go("dashboard")} onOpenCall={(id) => go(`calls/${id}`)} onOpenContact={() => go("contacts")} />
+          <CallDetailPage callId={param} onBack={() => go("dashboard")} onOpenCall={(id) => go(`calls/${id}`)} onOpenContact={() => go("contacts")} onOpenAiLab={(q) => go(`ai-lab${q ?? ""}`)} />
         )}
         {page === "contacts" && (
-          <Customer360Page onOpenCall={(id) => go(`calls/${id}`)} />
+          <Customer360Page onOpenCall={(id) => go(`calls/${id}`)} onOpenAiLab={(q) => go(`ai-lab${q ?? ""}`)} />
         )}
         {page === "managers" && <ManagersAnalyticsPage />}
         {page === "ai-lab" && <AiLabPage onOpenCall={(id) => go(`calls/${id}`)} />}

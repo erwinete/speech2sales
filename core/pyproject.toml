@@ -71,5 +71,6 @@ check_untyped_defs = true
 
 [tool.ruff.lint.per-file-ignores]
 "polylog/api/routers/connectors.py" = ["E501"]
-# эталонный DoD-скрипт ТЗ v3.0: длинные assert-строки и импорт после проверок
+# эталонные DoD-скрипты ТЗ: длинные assert-строки и импорт после проверок
 "scripts/verify_v3_dod.py" = ["E501", "E402"]
+"scripts/verify_v4_dod.py" = ["E501", "E402"]

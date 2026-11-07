@@ -8,12 +8,13 @@ import { Badge, Skeleton } from "../components/ui";
 import CallDetail from "../components/CallDetail";
 
 export default function CallDetailPage({
-  callId, onBack, onOpenCall, onOpenContact,
+  callId, onBack, onOpenCall, onOpenContact, onOpenAiLab,
 }: {
   callId: string;
   onBack: () => void;
   onOpenCall: (id: string) => void;
   onOpenContact: () => void;
+  onOpenAiLab?: (query: string) => void;
 }) {
   const { push } = useToast();
   const [detail, setDetail] = React.useState<CallDetailRow | null>(null);
@@ -84,6 +85,12 @@ export default function CallDetailPage({
         <Badge tone="neutral">{detail.asr_backend_id}</Badge>
         <div style={{ flex: 1 }} />
         <button disabled={busy} onClick={() => void reprocess()}>⟳ Перезапустить анализ</button>
+        {/* DEF-07 (ТЗ v4.0): быстрый переход звонка в ИИ-Анализатор */}
+        {onOpenAiLab && (
+          <button onClick={() => onOpenAiLab(`?mode=transcripts_range&call_ids=${callId}&days=90`)}>
+            ✨ Разобрать в ИИ (LLM / MCP)
+          </button>
+        )}
         <button onClick={() => void exportArtifact()}>Экспорт JSON</button>
       </div>
 

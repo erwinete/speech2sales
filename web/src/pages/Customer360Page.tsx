@@ -5,8 +5,10 @@ import Customer360 from "../components/Customer360";
 
 export default function Customer360Page({
   onOpenCall,
+  onOpenAiLab,
 }: {
   onOpenCall: (id: string) => void;
+  onOpenAiLab?: (query: string) => void;
 }) {
   const [query, setQuery] = useSearchParams();
   const contactId = query.get("contact");
@@ -21,6 +23,7 @@ export default function Customer360Page({
       contactId={contactId}
       onSelectContact={selectContact}
       onOpenCall={onOpenCall}
+      onOpenAiLab={onOpenAiLab}
       onBack={() => {
         window.location.pathname = "/dashboard";
         window.dispatchEvent(new PopStateEvent("popstate"));

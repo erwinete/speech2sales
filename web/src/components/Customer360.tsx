@@ -52,16 +52,18 @@ export default function Customer360({
   onSelectContact,
   onOpenCall,
   onBack,
+  onOpenAiLab,
 }: {
   contactId: string | null;
   onSelectContact: (id: string | null) => void;
   onOpenCall: (id: string) => void;
+  onOpenAiLab?: (query: string) => void;
   onBack: () => void;
 }) {
   return contactId === null ? (
     <ContactSearch onPick={onSelectContact} onBack={onBack} />
   ) : (
-    <ContactCardView contactId={contactId} onSelectContact={onSelectContact} onOpenCall={onOpenCall} />
+    <ContactCardView contactId={contactId} onSelectContact={onSelectContact} onOpenCall={onOpenCall} onOpenAiLab={onOpenAiLab} />
   );
 }
 
@@ -230,10 +232,12 @@ function ContactCardView({
   contactId,
   onSelectContact,
   onOpenCall,
+  onOpenAiLab,
 }: {
   contactId: string;
   onSelectContact: (id: string | null) => void;
   onOpenCall: (id: string) => void;
+  onOpenAiLab?: (query: string) => void;
 }) {
   const [card, setCard] = useState<ContactCard | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -312,6 +316,20 @@ function ContactCardView({
         )}
       </div>
 
+      {/* DEF-07 (ТЗ v4.0): клиент целиком — на разбор в ИИ-Анализатор */}
+      {onOpenAiLab && card.calls.length > 0 && (
+        <div style={{ margin: "10px 0" }}>
+          <button
+            onClick={() =>
+              onOpenAiLab(
+                `?mode=transcripts_range&days=90&call_ids=${card.calls.slice(0, 12).map((c) => c.id).join(",")}`,
+              )
+            }
+          >
+            ✨ Разобрать в ИИ (LLM / MCP)
+          </button>
+        </div>
+      )}
       <div style={{ display: "flex", gap: 16, margin: "16px 0", flexWrap: "wrap" }}>
         <Stat title="Звонков" value={`${stats.calls_total}`} sub={`обработано: ${stats.done_calls}`} />
         <Stat title="Первый звонок" value={fmtDate(stats.first_call_at)} />

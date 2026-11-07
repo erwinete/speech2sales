@@ -557,3 +557,176 @@ async def test_auto_migrate_adds_missing_columns(tmp_path):
         assert u.is_active is True or u.is_active == 1
     await engine2.dispose()
 
+
+# ── ТЗ v4.0 §8: DEF-01..DEF-05 ──
+
+
+def test_normalize_phone_multicountry():
+    """DEF-01: РБ-номера 8-0XX не превращаются в +7, УЗ +998 распознаётся."""
+    from polylog.graph.service import normalize_phone
+
+    assert normalize_phone("8 (903) 123-45-67") == "+79031234567"
+    assert normalize_phone("+375 (29) 123-45-67") == "+375291234567"
+    assert normalize_phone("8 029 123-45-67") == "+375291234567"
+    assert normalize_phone("8 017 222-33-44") == "+375172223344"
+    assert normalize_phone("998 90 123-45-67") == "+998901234567"
+    assert normalize_phone("+375291234567") == "+375291234567"
+    assert normalize_phone("101") is None
+    assert normalize_phone("") is None
+
+
+def test_detect_asr_split_passports():
+    """DEF-02: паспорта с ASR-разбивкой числа и смешанными сериями РБ/УЗ."""
+    from polylog.pii.detect import detect_pii
+
+    ru = detect_pii("Паспорт РФ 45 10 123 456 и второй 4510 654321")
+    assert sum(1 for s in ru if s.kind == "passport") == 2, ru
+    by = detect_pii("Паспорт РБ MP 1234567, кириллицей МР 123 45 67, личный номер 3120585A012PB5")
+    assert sum(1 for s in by if s.kind == "passport") == 2, by
+    assert any(s.kind == "id_number_by" for s in by)
+    uz = detect_pii("Паспорт РУз AA 1234567, кириллицей АД 765 43 21, ПИНФЛ 31504901234567")
+    assert sum(1 for s in uz if s.kind == "passport") == 2, uz
+    assert any(s.kind == "pinfl_uz" for s in uz)
+    # слитные 10 цифр — по-прежнему ИНН, не паспорт
+    inn = detect_pii("ИНН 7707083893")
+    assert any(s.kind == "inn" for s in inn) and not any(s.kind == "passport" for s in inn)
+
+
+async def test_mcp_resources_and_prompts(app_client):
+    """DEF-04: resources/list+read (4 URI) и prompts/list+get с данными."""
+    client, app = app_client
+    await _seed(app)
+
+    async def rpc(method, params=None, id_=1):
+        r = await client.post("/api/v1/mcp/rpc", headers=AUTH,
+                              json={"jsonrpc": "2.0", "id": id_, "method": method, "params": params or {}})
+        return r
+
+    r = await rpc("resources/list")
+    uris = [x["uri"] for x in r.json()["result"]["resources"]]
+    assert set(uris) == {
+        "polylog://stats/summary", "polylog://rubrics/active",
+        "polylog://risks/top", "polylog://managers/leaderboard",
+    }
+    for uri in uris:
+        r = await rpc("resources/read", {"uri": uri})
+        contents = r.json()["result"]["contents"]
+        assert contents and contents[0]["mimeType"] == "application/json", uri
+        json.loads(contents[0]["text"])  # валидный JSON
+    # лидерборд обезличен
+    r = await rpc("resources/read", {"uri": "polylog://managers/leaderboard"})
+    data = json.loads(r.json()["result"]["contents"][0]["text"])
+    assert all("Анна Смирнова" not in str(it) for it in data["items"])
+
+    r = await rpc("prompts/list")
+    names = [p["name"] for p in r.json()["result"]["prompts"]]
+    assert len(names) == 5
+    r = await rpc("prompts/get", {"name": names[0]})
+    msg = r.json()["result"]["messages"][0]["content"]["text"]
+    assert "Данные из «Полилога»" in msg
+    # неизвестный ресурс/промпт → -32602
+    r = await rpc("resources/read", {"uri": "polylog://nope"}, id_=9)
+    assert r.json()["error"]["code"] == -32602
+    r = await rpc("prompts/get", {"name": "nope"}, id_=10)
+    assert r.json()["error"]["code"] == -32602
+
+
+def test_smart_compress_key_window():
+    """DEF-03: сжатие сохраняет вопросные реплики, ключевые цитаты и края."""
+    from polylog.llm.context_builder import _compress_dialogue
+
+    segments = [{"text": f"реплика {i} без ключей"} for i in range(40)]
+    segments[20]["text"] = "Сколько это будет стоить?"
+    kept, dropped = _compress_dialogue(segments, key_texts=[])
+    assert dropped > 0 and len(kept) < 40
+    assert any("Сколько" in s["text"] for s in kept)
+    kept2, _ = _compress_dialogue(segments, key_texts=["реплика 5 без ключей"])
+    assert any("реплика 5 без ключей" in s["text"] for s in kept2)
+    # короткие диалоги не сжимаются
+    kept3, dropped3 = _compress_dialogue(segments[:6], [])
+    assert dropped3 == 0 and len(kept3) == 6
+
+
+async def test_build_context_budget_limits_calls(app_client):
+    """DEF-03: бюджет токенов урезает выборку (контекст вписывается)."""
+    client, app = app_client
+    await _seed(app)
+    from polylog.llm.context_builder import build_context, estimate_tokens
+
+    sm = app.state.sessionmaker
+    async with sm() as s:
+        org = await get_default_org(s)
+        bundle = await build_context(
+            s, org, mode="transcripts_range", days=30, limit_calls=50,
+            max_context_tokens=300,
+        )
+        assert estimate_tokens(bundle.markdown) <= 300 or bundle.calls_count <= 4
+
+
+async def test_analyze_stream_mock_llm(app_client):
+    """DEF-03: SSE-эндпоинт /ai/analyze/stream — события meta/content/done,
+    run сохраняется в llm_analysis_runs со статусом done."""
+    client, app = app_client
+    await _seed(app)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sse = (
+            "data: " + json.dumps({"choices": [{"delta": {"content": "# Отчёт "}}]}) + "\n\n"
+            + "data: " + json.dumps({"choices": [{"delta": {"content": "стриминга"}}]}) + "\n\n"
+            + "data: " + json.dumps({"choices": [{"delta": {}}], "usage": {"total_tokens": 55}}) + "\n\n"
+            + "data: [DONE]" + "\n\n"
+        )
+        return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+
+    app.state.llm_transport = httpx.MockTransport(handler)
+    events: list[dict] = []
+    async with client.stream(
+        "POST", "/api/v1/ai/analyze/stream", headers=AUTH,
+        json={"mode": "rubert_scores", "days": 30, "api_key": "sk", "model": "m",
+              "user_prompt": "тест", "limit_calls": 5},
+    ) as r:
+        assert r.status_code == 200
+        assert "text/event-stream" in r.headers.get("content-type", "")
+        async for line in r.aiter_lines():
+            if line.startswith("event:"):
+                events.append({"event": line.split(":", 1)[1].strip(), "data": ""})
+            elif line.startswith("data:") and events:
+                events[-1]["data"] = line[5:].strip()
+
+    kinds = [e["event"] for e in events]
+    assert kinds[0] == "meta" and kinds[-1] == "done", kinds
+    meta = json.loads(events[0]["data"])
+    assert meta["calls_count"] == 2 and "alias_map" in meta
+    done = json.loads(events[-1]["data"])
+    assert done["token_usage"]["total_tokens"] == 55
+    # run зафиксирован
+    runs = (await client.get("/api/v1/ai/runs", headers=AUTH)).json()["items"]
+    assert runs and runs[0]["status"] == "done"
+    detail = (await client.get(f"/api/v1/ai/runs/{runs[0]['id']}", headers=AUTH)).json()
+    assert detail["result_markdown"] == "# Отчёт стриминга"
+
+
+async def test_analyze_stream_llm_error(app_client):
+    """SSE-стриминг: HTTP-ошибка LLM → событие error, run = failed."""
+    client, app = app_client
+    await _seed(app)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(402, json={"error": "no credits"})
+
+    app.state.llm_transport = httpx.MockTransport(handler)
+    events: list[str] = []
+    async with client.stream(
+        "POST", "/api/v1/ai/analyze/stream", headers=AUTH,
+        json={"mode": "rubert_scores", "days": 30, "api_key": "sk", "model": "m",
+              "user_prompt": "тест", "limit_calls": 5},
+    ) as r:
+        assert r.status_code == 200
+        async for line in r.aiter_lines():
+            if line.startswith("event:"):
+                events.append(line.split(":", 1)[1].strip())
+    assert "error" in events
+    runs = (await client.get("/api/v1/ai/runs", headers=AUTH)).json()["items"]
+    assert runs and runs[0]["status"] == "failed"
+    assert "402" in (runs[0]["error_message"] or "")
+

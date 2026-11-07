@@ -37,32 +37,49 @@ const PROVIDERS = [
   { id: "custom", label: "Свой OpenAI-compatible Endpoint", url: "" },
 ];
 
-/** Мини-рендер Markdown без внешних зависимостей + кликабельные [CALL_#N]. */
-function MarkdownView({ text, aliasMap, onOpenCall }: {
+/** SanitizedReportRenderer (DEF-05, ТЗ v4.0 §8.1): мини-рендер Markdown без
+    внешних зависимостей. decode=true — локальная расшифровка алиасов ПДн в
+    браузере по alias_map (значения не покидали сервер); [CALL_#N] — всегда
+    кликабельный бейдж перехода к звонку. */
+const ID_TOKEN_RE = /\[(CALL|CONTACT|DEAL)_#(\d+)\]/;
+const ANY_ALIAS_RE = /\[[A-ZА-ЯЁ0-9_#]+\]/g;
+
+function MarkdownView({ text, aliasMap, onOpenCall, decode = false }: {
   text: string;
   aliasMap: Record<string, string> | null;
   onOpenCall?: (id: string) => void;
+  decode?: boolean;
 }) {
   const renderLine = (line: string, key: number) => {
     // Текст вставляем только как React-строки (авто-экранирование)
     const parts: React.ReactNode[] = [];
-    const tokenRe = /\[(CALL|CONTACT|DEAL)_#(\d+)\]/g;
-    let m: RegExpExecArray | null;
     let last = 0;
-    while ((m = tokenRe.exec(line)) !== null) {
+    ANY_ALIAS_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = ANY_ALIAS_RE.exec(line)) !== null) {
       if (m.index > last) parts.push(line.slice(last, m.index));
       const alias = m[0];
       const real = aliasMap?.[alias];
-      parts.push(
-        real && onOpenCall ? (
-          <a key={`${key}-${m.index}`} href={`/calls/${real}`} className="badge brand"
-             onClick={(e) => { e.preventDefault(); onOpenCall(real); }}>
-            <Icon name="play" size={11} /> {alias}
-          </a>
-        ) : (
-          <span key={`${key}-${m.index}`} className="badge neutral">{alias}</span>
-        ),
-      );
+      const idMatch = ID_TOKEN_RE.exec(alias);
+      if (idMatch) {
+        const kind = idMatch[1];
+        if (kind === "CALL" && real && onOpenCall) {
+          parts.push(
+            <a key={`${key}-${m.index}`} href={`/calls/${real}`} className="badge brand"
+               onClick={(e) => { e.preventDefault(); onOpenCall(real); }}>
+              <Icon name="play" size={11} /> {alias}
+            </a>,
+          );
+        } else if (kind === "CONTACT" && decode) {
+          parts.push(<span key={`${key}-${m.index}`} className="badge violet">{real ?? alias}</span>);
+        } else {
+          parts.push(<span key={`${key}-${m.index}`} className="badge neutral">{alias}</span>);
+        }
+      } else if (decode && real) {
+        parts.push(real); // DEF-05: локальная расшифровка ПДн-алиасов
+      } else {
+        parts.push(<span key={`${key}-${m.index}`} className="badge neutral">{alias}</span>);
+      }
       last = m.index + alias.length;
     }
     if (last < line.length) parts.push(line.slice(last));
@@ -135,6 +152,13 @@ export default function AiLabPage({ onOpenCall }: { onOpenCall: (id: string) => 
   const [analyzing, setAnalyzing] = React.useState(false);
   const [result, setResult] = React.useState<{ markdown: string; aliasMap: Record<string, string>; usage?: Record<string, number> } | null>(null);
   const [runs, setRuns] = React.useState<{ id: string; status: string; model_id: string; created_at: string; prompt_text: string }[]>([]);
+  // DEF-05: локальная расшифровка алиасов ПДн в браузере (значения не покидали сервер)
+  const [decodeAliases, setDecodeAliases] = React.useState(false);
+  // DEF-03: потоковый вывод отчёта через POST /ai/analyze/stream
+  const [streaming, setStreaming] = React.useState(true);
+  const [reasoning, setReasoning] = React.useState("");
+  // DEF-07: предвыборка из других экранов (?mode=…&call_ids=…&agent_name=…&risk_band=…)
+  const [callIds, setCallIds] = React.useState<string[]>([]);
 
   const [mcpCfg, setMcpCfg] = React.useState<Awaited<ReturnType<typeof api.mcpConfig>> | null>(null);
   const [harness, setHarness] = React.useState("claude_code");
@@ -152,6 +176,21 @@ export default function AiLabPage({ onOpenCall }: { onOpenCall: (id: string) => 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // DEF-07: параметры быстрого перехода («✨ Разобрать в ИИ») из других экранов
+  React.useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const modeQ = q.get("mode");
+    if (modeQ === "rubert_scores" || modeQ === "problematic_calls" || modeQ === "transcripts_range") {
+      setMode(modeQ);
+    }
+    const ids = q.get("call_ids");
+    if (ids) setCallIds(ids.split(",").map((s) => s.trim()).filter(Boolean));
+    const agentQ = q.get("agent_name");
+    if (agentQ) setAgentName(agentQ);
+    const bandQ = q.get("risk_band");
+    if (bandQ) setRiskBand(bandQ);
+  }, []);
+
   const buildRequest = () => ({
     mode,
     days,
@@ -163,6 +202,7 @@ export default function AiLabPage({ onOpenCall }: { onOpenCall: (id: string) => 
     objection_type: objectionType || null,
     agent_name: agentName || null,
     limit_calls: limit,
+    call_ids: callIds,
     pii,
   });
 
@@ -190,21 +230,49 @@ export default function AiLabPage({ onOpenCall }: { onOpenCall: (id: string) => 
     if (!apiKey.trim()) { push("error", "Укажите API-ключ провайдера"); return; }
     setAnalyzing(true);
     setResult(null);
+    setReasoning("");
+    const reqBody = {
+      ...buildRequest(),
+      provider,
+      base_url: baseUrl,
+      api_key: apiKey,
+      model,
+      system_prompt: systemPrompt,
+      user_prompt: userPrompt,
+      temperature,
+      max_tokens: maxTokens,
+    };
     try {
-      const body = await api.aiAnalyze({
-        ...buildRequest(),
-        provider,
-        base_url: baseUrl,
-        api_key: apiKey,
-        model,
-        system_prompt: systemPrompt,
-        user_prompt: userPrompt,
-        temperature,
-        max_tokens: maxTokens,
-      });
-      setResult({ markdown: body.result_markdown, aliasMap: body.alias_map, usage: body.token_usage });
+      if (streaming) {
+        // DEF-03: SSE-стриминг — чанки content/reasoning появляются по мере генерации
+        let acc = "";
+        let aliases: Record<string, string> = {};
+        let usage: Record<string, number> | undefined;
+        await api.aiAnalyzeStream(reqBody, (e) => {
+          if (e.type === "meta") {
+            aliases = (e.data.alias_map as Record<string, string>) ?? {};
+            setResult({ markdown: "", aliasMap: aliases });
+          } else if (e.type === "content") {
+            acc += String(e.data.delta ?? "");
+            setResult({ markdown: acc, aliasMap: aliases });
+          } else if (e.type === "reasoning") {
+            setReasoning((r) => r + String(e.data.delta ?? ""));
+          } else if (e.type === "done") {
+            usage = (e.data.token_usage as Record<string, number>) ?? undefined;
+            setResult({ markdown: acc, aliasMap: aliases, usage });
+            const n = Number(e.data.calls_count ?? 0);
+            push("success", `ИИ-анализ готов (поток): ${n} звонков в выборке`);
+          } else if (e.type === "error") {
+            push("error", `Анализ: ${String(e.data.message ?? "").slice(0, 160)}`);
+          }
+        });
+        setResult((prev) => ({ ...prev!, markdown: acc || prev?.markdown || "", aliasMap: aliases, usage }));
+      } else {
+        const body = await api.aiAnalyze(reqBody);
+        setResult({ markdown: body.result_markdown, aliasMap: body.alias_map, usage: body.token_usage });
+        push("success", `ИИ-анализ готов: ${body.calls_count} звонков в выборке`);
+      }
       api.aiRuns().then((r) => setRuns(r.items)).catch(() => undefined);
-      push("success", `ИИ-анализ готов: ${body.calls_count} звонков в выборке`);
     } catch (e) {
       push("error", `Анализ: ${String(e).slice(0, 160)}`);
     } finally {
@@ -459,6 +527,10 @@ export default function AiLabPage({ onOpenCall }: { onOpenCall: (id: string) => 
               <label>Задание (User Prompt)</label>
               <textarea rows={4} value={userPrompt} onChange={(e) => setUserPrompt(e.target.value)} placeholder="Что должен найти и подготовить ИИ" />
             </div>
+            <label className="pii-chip" style={{ marginBottom: 8 }}>
+              <input type="checkbox" checked={streaming} onChange={(e) => setStreaming(e.target.checked)} />
+              <span>Потоковый вывод (SSE)<br /><small>отчёт появляется чанками по мере генерации</small></span>
+            </label>
             <button className="primary" disabled={analyzing} onClick={() => void runAnalysis()} style={{ width: "100%", padding: "10px 0" }}>
               <Icon name="sparkles" size={15} /> {analyzing ? "ИИ анализирует…" : "Запустить глубокий ИИ-анализ"}
             </button>
@@ -469,8 +541,23 @@ export default function AiLabPage({ onOpenCall }: { onOpenCall: (id: string) => 
               <h3>Результат анализа</h3>
               {result?.usage && <small className="muted">токены: {result.usage.total_tokens ?? "—"}</small>}
             </div>
+            {/* DEF-05: локальная расшифровка алиасов ПДн в браузере */}
+            <label className="pii-chip" style={{ marginBottom: 8 }}>
+              <input type="checkbox" checked={decodeAliases} onChange={(e) => setDecodeAliases(e.target.checked)} />
+              <span>Локально расшифровать алиасы в браузере (только для чтения)<br />
+                <small>подставляет реальные значения из alias_map — данные не покидали ваш сервер</small></span>
+            </label>
+            {analyzing && streaming && (
+              <small className="muted" style={{ display: "block", marginBottom: 6 }}>Отчёт печатается по мере генерации…</small>
+            )}
+            {reasoning && (
+              <details style={{ marginBottom: 8 }}>
+                <summary style={{ cursor: "pointer", fontWeight: 600 }}>Рассуждения модели (reasoning)</summary>
+                <pre className="mono" style={{ whiteSpace: "pre-wrap", fontSize: 12, background: "var(--bg-subtle)", padding: 12, borderRadius: 8, maxHeight: 240, overflow: "auto" }}>{reasoning}</pre>
+              </details>
+            )}
             {result ? (
-              <MarkdownView text={result.markdown} aliasMap={result.aliasMap} onOpenCall={onOpenCall} />
+              <MarkdownView text={result.markdown} aliasMap={result.aliasMap} onOpenCall={onOpenCall} decode={decodeAliases} />
             ) : (
               <EmptyState icon="sparkles" text="Результат появится после запуска анализа" />
             )}

@@ -400,6 +400,40 @@ export const api = {
     request<AiAnalyzeResponse>("/api/v1/ai/analyze", {
       method: "POST", body: JSON.stringify(body),
     }),
+  // DEF-03 (ТЗ v4.0): SSE-стриминг анализа; fetch — единственный в api.ts
+  aiAnalyzeStream: async (body: AiAnalyzeRequest, onEvent: (e: AiStreamEvent) => void): Promise<void> => {
+    const res = await fetch("/api/v1/ai/analyze/stream", {
+      method: "POST",
+      headers: { "X-Api-Key": TOKEN(), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok || !res.body) {
+      const t2 = await res.text();
+      throw new Error(`API ${res.status}: ${t2.slice(0, 200)}`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const blocks = buf.split("\n\n");
+      buf = blocks.pop() ?? "";
+      for (const block of blocks) {
+        let evt = "message";
+        const dataLines: string[] = [];
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event:")) evt = line.slice(6).trim();
+          else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+        }
+        if (!dataLines.length) continue;
+        let data: Record<string, unknown> = {};
+        try { data = JSON.parse(dataLines.join("\n")); } catch { data = { raw: dataLines.join("\n") }; }
+        onEvent({ type: evt as AiStreamEvent["type"], data });
+      }
+    }
+  },
   aiModels: (baseUrl: string, apiKey?: string) => {
     const q = new URLSearchParams({ base_url: baseUrl });
     if (apiKey) q.set("api_key", apiKey);
@@ -684,4 +718,12 @@ export interface McpConfig {
       config_json?: Record<string, unknown>;
     }
   >;
+}
+
+
+// ── AI Lab: SSE-стриминг (DEF-03) ──
+
+export interface AiStreamEvent {
+  type: "meta" | "reasoning" | "content" | "done" | "error";
+  data: Record<string, unknown>;
 }

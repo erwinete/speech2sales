@@ -12,26 +12,38 @@ from polylog.models.graph import Contact, EntityLink, PhoneNumber
 from polylog.models.system import Org
 
 _PHONE_DIGITS = re.compile(r"\D+")
+# Междугородние и мобильные префиксы РБ при внутреннем наборе через 8-0XX
+# (11 цифр): иначе «8 029 123-45-67» превращается в несуществующий +7029... (DEF-01)
+_BY_NATIONAL_PREFIXES = (
+    "8015", "8016", "8017", "8021", "8022", "8023", "8024", "8025", "8029", "8033", "8044"
+)
 
 
 def normalize_phone(raw: str | None) -> str | None:
-    """→ E.164 (+7XXXXXXXXXX для RU-форматов). None для внутренних/битых номеров."""
+    """Нормализация номера телефона в E.164 для РФ (+7), РБ (+375) и
+    Узбекистана (+998) (ТЗ v4.0 §8.2, DEF-01). None для коротких внутренних
+    номеров агентов (< 6 цифр) и пустых строк."""
     if not raw:
         return None
     digits = _PHONE_DIGITS.sub("", raw)
-    if not digits:
+    if not digits or len(digits) < 6 or len(digits) > 15:
         return None
+
     if raw.lstrip().startswith("+"):
-        return f"+{digits}" if 6 <= len(digits) <= 15 else None
+        return f"+{digits}"
+    if len(digits) == 12 and digits.startswith("375"):
+        return f"+{digits}"
+    if len(digits) == 11 and digits.startswith(_BY_NATIONAL_PREFIXES):
+        return f"+375{digits[2:]}"
+    if len(digits) == 12 and digits.startswith("998"):
+        return f"+{digits}"
     if len(digits) == 11 and digits.startswith("8"):
         return f"+7{digits[1:]}"
-    if len(digits) == 10:
-        return f"+7{digits}"
     if len(digits) == 11 and digits.startswith("7"):
         return f"+{digits}"
-    if 6 <= len(digits) <= 15:
-        return f"+{digits}"  # без страны — оставляем как есть с плюсом
-    return None  # короткие внутренние номера — не телефон клиента
+    if len(digits) == 10:
+        return f"+7{digits}"
+    return f"+{digits}"
 
 
 async def get_default_org(session: AsyncSession, name: str = "default") -> Org:

@@ -459,6 +459,29 @@ async def _mode_problematic(session, org, req) -> tuple[str, dict, list[Call]]:
 # ── режим 3: transcripts_range ──
 
 
+def _compress_dialogue(segments: list[dict], key_texts: list[str]) -> tuple[list[dict], int]:
+    """smart_compress (DEF-03): окно ключевых реплик — первые 3, последние 3,
+    реплики с вопросами «?», возражениями/нарушениями (key_texts) и по одной
+    соседней реплике контекста. Возвращает (реплики, число пропущенных)."""
+    if len(segments) <= 8:
+        return segments, 0
+    key_lower = {t.lower() for t in key_texts if t}
+    keep: set[int] = set()
+    for i, s in enumerate(segments):
+        if i < 3 or i >= len(segments) - 3:
+            keep.add(i)
+        elif "?" in (s.get("text") or ""):
+            keep.add(i)
+        elif any(k and k in (s.get("text") or "").lower() for k in key_lower):
+            keep.add(i)
+    # ±1 соседняя реплика вокруг ключевых
+    for i in list(keep):
+        keep.add(max(0, i - 1))
+        keep.add(min(len(segments) - 1, i + 1))
+    kept = [s for i, s in enumerate(segments) if i in keep]
+    return kept, len(segments) - len(kept)
+
+
 async def _mode_transcripts(session, org, req) -> tuple[str, dict, list[Call]]:
     dt_from, dt_to = _period_bounds(req.get("days", 30), req.get("date_from"), req.get("date_to"))
     agent_ids = await _resolve_agents(session, org.id, req.get("agent_name"))
@@ -494,6 +517,9 @@ async def _mode_transcripts(session, org, req) -> tuple[str, dict, list[Call]]:
     for o in obj_rows:
         obj_by_call.setdefault(o.call_id, []).append(o)
 
+    budget = req.get("max_context_tokens")
+    smart = req.get("smart_compress", True)
+    size = 200  # заголовок
     lines: list[str] = [
         f"# Транскрипты звонков за период {dt_from.date()} — {dt_to.date()}",
         "",
@@ -519,8 +545,17 @@ async def _mode_transcripts(session, org, req) -> tuple[str, dict, list[Call]]:
             }
             for s in call.segments
         ]
+        dropped = 0
+        header_len = 120 + sum(len(o["quote"]) for o in entry["objections"])
+        if budget and smart and size + header_len > budget:
+            break  # бюджет исчерпан — остальные звонки не включаем
+        if budget and smart and size + header_len + sum(len(d["text"]) for d in dialogue) > budget:
+            key_texts = [o["quote"] for o in entry["objections"]]
+            dialogue, dropped = _compress_dialogue(dialogue, key_texts)
         entry["segments"] = dialogue
+        entry["omitted_turns"] = dropped
         entries.append(entry)
+        size += header_len + sum(len(d["text"]) for d in dialogue)
 
         lines.append(
             f"## Звонок {call.id} {call.started_at.strftime('%Y-%m-%d %H:%M')}, {call.direction}, "
@@ -528,9 +563,11 @@ async def _mode_transcripts(session, org, req) -> tuple[str, dict, list[Call]]:
         )
         if agent_name:
             lines.append(f"Менеджер: {agent_name}")
-        for s in call.segments:
-            role = ROLE_RU.get(s.speaker, s.speaker)
-            lines.append(f"[{_fmt_ms(s.start_ms)}] {role}: {s.text}")
+        if dropped:
+            lines.append(f"[smart_compress: {dropped} реплик опущено — сохранены ключевые окна]")
+        for d in dialogue:
+            role = ROLE_RU.get(d["speaker"], d["speaker"])
+            lines.append(f"[{_fmt_ms(d['start_ms'])}] {role}: {d['text']}")
         for o in entry["objections"]:
             lines.append(f"> Возражение «{o['type']}» ({o['status'] or '?'}): «{o['quote']}»")
         lines.append("")
@@ -563,25 +600,42 @@ async def build_context(
     objection_type: str | None = None,
     call_ids: list[str] | None = None,
     limit_calls: int = 30,
+    max_context_tokens: int = 48000,
+    smart_compress: bool = True,
 ) -> ContextBundle:
-    """Собирает контекст по режиму (без санитайзера — см. apply_pii)."""
+    """Собирает контекст по режиму (без санитайзера — см. apply_pii).
+
+    Бюджет токенов (DEF-03): в transcripts_range длинные диалоги сжимаются
+    smart_compress'ом до ключевых окон; если контекст всё равно превышает
+    max_context_tokens, лимит звонков урезается вдво́е до вписывания."""
     if mode not in MODES:
         raise ValueError(f"неизвестный режим: {mode}; доступно {MODES}")
-    req: dict[str, Any] = {
-        "date_from": date_from,
-        "date_to": date_to,
-        "days": days,
-        "agent_user_id": uuid.UUID(agent_user_id) if agent_user_id else None,
-        "agent_name": agent_name,
-        "risk_band": risk_band,
-        "score_max": score_max,
-        "direction": direction,
-        "min_duration_sec": min_duration_sec,
-        "objection_type": objection_type,
-        "call_ids": [uuid.UUID(x) for x in call_ids or []],
-        "limit_calls": limit_calls,
-    }
-    markdown, structured, calls = await _MODE_BUILDERS[mode](session, org, req)
+
+    async def _build(limit: int) -> tuple[str, dict, list[Call]]:
+        req: dict[str, Any] = {
+            "date_from": date_from,
+            "date_to": date_to,
+            "days": days,
+            "agent_user_id": uuid.UUID(agent_user_id) if agent_user_id else None,
+            "agent_name": agent_name,
+            "risk_band": risk_band,
+            "score_max": score_max,
+            "direction": direction,
+            "min_duration_sec": min_duration_sec,
+            "objection_type": objection_type,
+            "call_ids": [uuid.UUID(x) for x in call_ids or []],
+            "limit_calls": limit,
+            "max_context_tokens": max_context_tokens,
+            "smart_compress": smart_compress,
+        }
+        return await _MODE_BUILDERS[mode](session, org, req)
+
+    limit = max(1, limit_calls)
+    for _ in range(3):
+        markdown, structured, calls = await _build(limit)
+        if estimate_tokens(markdown) <= max_context_tokens or limit <= 4:
+            break
+        limit = max(4, limit // 2)
     unique_ids = {c.id for c in calls}
     return ContextBundle(mode=mode, markdown=markdown, structured=structured, calls_count=len(unique_ids))
 

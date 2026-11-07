@@ -23,6 +23,9 @@ class AIContextRequest(BaseModel):
     objection_type: str | None = None
     call_ids: list[str] = Field(default_factory=list)
     limit_calls: int = 30
+    # DEF-03 (ТЗ v4.0 §8.1): бюджет контекстного окна и умное сжатие транскриптов
+    max_context_tokens: int = 48000
+    smart_compress: bool = True
     pii: PiiSanitizerConfig = Field(default_factory=PiiSanitizerConfig)
 
 

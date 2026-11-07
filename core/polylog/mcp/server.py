@@ -7,9 +7,15 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from sqlalchemy import func, select
+
 from polylog.llm import context_builder as cb
+from polylog.llm.prompts import DEFAULT_SYSTEM_PROMPT, PRESETS
+from polylog.models.calls import Call, Objection, Score, Violation
+from polylog.models.system import Rubric
 from polylog.pii.sanitizer import PiiSanitizerConfig, SanitizerSession
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -128,6 +134,147 @@ def _resolve_call_id(registry: dict[str, str], call_id: str) -> uuid.UUID:
     raw = (call_id or "").strip()
     real = registry.get(raw, raw)
     return uuid.UUID(real)
+
+
+# ── ресурсы и промпты (DEF-04, ТЗ v4.0 §8.1) ──
+
+RESOURCES: list[dict[str, Any]] = [
+    {
+        "uri": "polylog://stats/summary",
+        "name": "Сводка по звонкам организации",
+        "description": "Обработанные звонки, средний балл, возражения и нарушения за 30 дней",
+        "mimeType": "application/json",
+    },
+    {
+        "uri": "polylog://rubrics/active",
+        "name": "Активная рубрика скоринга",
+        "description": "Текущий чек-лист с весами пунктов",
+        "mimeType": "application/json",
+    },
+    {
+        "uri": "polylog://risks/top",
+        "name": "Топ контактов в зоне риска",
+        "description": "Scorecard/CatBoost: band, score и факторы по убыванию риска",
+        "mimeType": "application/json",
+    },
+    {
+        "uri": "polylog://managers/leaderboard",
+        "description": "Эффективность менеджеров: звонки, баллы, отработка возражений",
+        "name": "Лидерборд менеджеров",
+        "mimeType": "application/json",
+    },
+]
+
+
+async def read_resource(session, org, uri: str, registry: dict[str, str]) -> list[dict[str, Any]]:
+    """resources/read: 4 среза данных «Полилога» в JSON. Лидерборд отдаётся
+    с обезличенными именами ([AGENT_N]) — контент покидает сервер."""
+
+    async def _json(data: Any) -> list[dict[str, Any]]:
+        return [{"uri": uri, "mimeType": "application/json", "text": json.dumps(data, ensure_ascii=False, indent=1)}]
+
+    if uri == "polylog://stats/summary":
+        dt_from = datetime.now(UTC) - timedelta(days=30)
+        rows = (
+            (
+                await session.execute(
+                    select(
+                        func.count(func.distinct(Call.id)),
+                        func.avg(Score.total),
+                        func.count(Objection.id),
+                        func.count(Violation.id),
+                    )
+                    .select_from(Call)
+                    .outerjoin(Score, Score.call_id == Call.id)
+                    .outerjoin(Objection, Objection.call_id == Call.id)
+                    .outerjoin(Violation, Violation.call_id == Call.id)
+                    .where(Call.org_id == org.id, Call.state == "done", Call.started_at >= dt_from)
+                )
+            )
+            .first()
+        )
+        data = {
+            "period_days": 30,
+            "calls_done": int(rows[0] or 0) if rows else 0,
+            "avg_score": round(float(rows[1]), 1) if rows and rows[1] is not None else None,
+            "objections": int(rows[2] or 0) if rows else 0,
+            "violations": int(rows[3] or 0) if rows else 0,
+        }
+        return await _json(data)
+    if uri == "polylog://rubrics/active":
+        rubric = (
+            (
+                await session.execute(
+                    select(Rubric)
+                    .where(Rubric.org_id == org.id, Rubric.is_active.is_(True))
+                    .order_by(Rubric.version.desc())
+                    .limit(1)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        data = (
+            {"id": str(rubric.id), "name": rubric.name, "version": rubric.version, "spec": rubric.spec}
+            if rubric
+            else {"name": None, "spec": None}
+        )
+        return await _json(data)
+    if uri == "polylog://risks/top":
+        risks = await cb.compute_org_risks_batch(session, org.id)
+        items = sorted(
+            (
+                {
+                    "contact_id": str(cid),
+                    "score": r.get("score"),
+                    "band": r.get("band"),
+                    "top_factor": (r.get("factors") or [{}])[0].get("description"),
+                }
+                for cid, r in risks.items()
+            ),
+            key=lambda x: x["score"] if x["score"] is not None else -1,
+            reverse=True,
+        )[:10]
+        return await _json({"items": items})
+    if uri == "polylog://managers/leaderboard":
+        items = await cb.team_coaching_summary(session, org, days=30)
+        sess = SanitizerSession(PiiSanitizerConfig())
+        for it in items:
+            it["agent"] = sess.sanitize_value(it["agent"], "names", "AGENT")
+        return await _json({"items": items, "alias_map": sess.summary()["alias_map"]})
+    raise KeyError(f"неизвестный ресурс: {uri}; доступно: {[r['uri'] for r in RESOURCES]}")
+
+
+def _prompts_list() -> list[dict[str, Any]]:
+    return [
+        {"name": p["id"], "description": p["title"], "arguments": []}
+        for p in PRESETS
+    ]
+
+
+async def get_prompt(session, org, name: str, registry: dict[str, str]) -> dict[str, Any]:
+    """prompts/get: пресет промпта с автоподстановкой обезличенных данных
+    (режим пресета, 30 дней, малый лимит) — готовый user message для агента."""
+    preset = next((p for p in PRESETS if p["id"] == name), None)
+    if preset is None:
+        raise KeyError(f"неизвестный промпт: {name}; доступно: {[p['id'] for p in PRESETS]}")
+    bundle = await cb.build_context(
+        session, org, mode=preset["mode"], days=30, limit_calls=10,
+        max_context_tokens=24000,
+    )
+    cb.apply_pii(bundle)
+    _remember_aliases(registry, bundle.stats)
+    system_prompt = preset.get("system_prompt") or DEFAULT_SYSTEM_PROMPT
+    text = (
+        f"{preset['user_prompt']}\n\n--- Данные из «Полилога» (режим {bundle.mode}, "
+        f"{bundle.calls_count} звонков, ПДн удалены) ---\n\n{bundle.markdown}"
+    )
+    return {
+        "description": preset["title"],
+        "messages": [
+            {"role": "user", "content": {"type": "text", "text": f"{system_prompt}\n\n{text}"}},
+        ],
+    }
 
 
 # ── тулзы ──
@@ -282,9 +429,22 @@ async def handle_rpc(
     if method == "tools/list":
         return _rpc_result({"tools": TOOLS}, request_id)
     if method == "resources/list":
-        return _rpc_result({"resources": []}, request_id)
+        return _rpc_result({"resources": RESOURCES}, request_id)
+    if method == "resources/read":
+        uri = params.get("uri")
+        try:
+            contents = await read_resource(session, org, uri, registry)
+        except KeyError as e:
+            return _rpc_error(-32602, str(e), request_id)
+        return _rpc_result({"contents": contents}, request_id)
     if method == "prompts/list":
-        return _rpc_result({"prompts": []}, request_id)
+        return _rpc_result({"prompts": _prompts_list()}, request_id)
+    if method == "prompts/get":
+        name = params.get("name")
+        try:
+            return _rpc_result(await get_prompt(session, org, name, registry), request_id)
+        except (KeyError, ValueError) as e:
+            return _rpc_error(-32602, str(e), request_id)
     if method == "tools/call":
         name = params.get("name")
         args = params.get("arguments") or {}

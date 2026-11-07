@@ -3,6 +3,7 @@ Ollama / vLLM / LM Studio. Только httpx, без SDK-зависимосте
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -119,3 +120,66 @@ async def list_models(
             }
         )
     return out
+
+
+async def chat_completion_stream(
+    *,
+    base_url: str = DEFAULT_BASE_URL,
+    api_key: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.2,
+    max_tokens: int = 4096,
+    timeout: httpx.Timeout | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+):
+    """POST {base_url}/chat/completions со stream=True (DEF-03): async-
+    генератор чанков {"type": "reasoning"|"content", "delta": str} и, в
+    финальном чанке, {"type": "usage", "usage": {...}}. reasoning — для
+    reasoning-моделей OpenRouter (delta.reasoning / reasoning_content)."""
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+    try:
+        async with httpx.AsyncClient(timeout=timeout or LLM_TIMEOUT, transport=transport) as client:
+            async with client.stream(
+                "POST",
+                f"{base_url.rstrip('/')}/chat/completions",
+                headers=_headers(base_url, api_key),
+                json=payload,
+            ) as resp:
+                if resp.status_code >= 400:
+                    body = (await resp.aread()).decode("utf-8", "replace")
+                    raise _llm_error(resp.status_code, body)
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data or data == "[DONE]":
+                        continue
+                    try:
+                        chunk = json.loads(data)
+                    except ValueError:
+                        continue
+                    usage = chunk.get("usage")
+                    if usage:
+                        yield {"type": "usage", "usage": usage}
+                    choices = chunk.get("choices") or []
+                    delta = (choices[0].get("delta") or {}) if choices else {}
+                    reasoning = delta.get("reasoning") or delta.get("reasoning_content")
+                    if reasoning:
+                        yield {"type": "reasoning", "delta": reasoning}
+                    if delta.get("content"):
+                        yield {"type": "content", "delta": delta["content"]}
+    except httpx.HTTPError as e:
+        raise LLMError(f"LLM-эндпоинт недоступен: {e}") from e
